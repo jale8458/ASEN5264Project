@@ -1,0 +1,8 @@
+*make*
+!OMPLTest/CMakeLists.txt
+*.csv
+build/
+*.pkl
+*data_batch*
+*weights.h5
+animation/
