@@ -22,7 +22,7 @@ std::tuple<ob::PlannerStatus, ob::PathPtr> SSTSolve(const oc::SpaceInformationPt
     return std::make_tuple(solved, pdef->getSolutionPath());
 }
 
-SSTResult PlanWithSST(const std::string obsFile) {
+std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 2>> PlanWithSST(const std::string obsFile, const double solveTime) {
     // Bounds
     ob::RealVectorBounds se2Bounds = ObsSpace2D::getBoundsGeneric();
     ob::RealVectorBounds cBounds(2);
@@ -70,27 +70,61 @@ SSTResult PlanWithSST(const std::string obsFile) {
     goal << se2Goal;
     ob::GoalPtr goalRegion = std::make_shared<SE2GoalRegion>(si, goal, 0.5, 0.5);
 
-    auto [solved, path] = SSTSolve(si, start, goalRegion);
+    auto [solved, path] = SSTSolve(si, start, goalRegion, solveTime);
+    return ProcessPath(solved, path, si);
+}
 
-    ///// Solution processing
+std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 2>> ProcessPath(const ob::PlannerStatus& solved, const ob::PathPtr& path, const oc::SpaceInformationPtr& si) {
+    /// Solution processing -> Boolean & Julia matrices
+    oc::PathControl* pathControl = path->as<oc::PathControl>();
+
+    size_t n_states = pathControl->getStateCount();
+    size_t n_controls = pathControl->getControlCount();
+    size_t ctrl_dim = si->getControlSpace()->as<oc::RealVectorControlSpace>()->getDimension();
+    size_t state_dim = si->getStateDimension();
+
     // Solution Status
-    SSTResult result;
+    bool foundSolution;
     if (solved == ob::PlannerStatus::EXACT_SOLUTION || solved == ob::PlannerStatus::APPROXIMATE_SOLUTION)
     {
         std::cout<<"Exact solution found.\n";
-        result.foundSolution = true;
+        foundSolution = true;
     }
     else if (solved == ob::PlannerStatus::APPROXIMATE_SOLUTION) {
         std::cout<<"Solution not found. Returning nearest path.\n";
-        result.foundSolution = false;
+        foundSolution = false;
     }
     else {
         throw std::runtime_error("Unknown Solution Status.");
     }
+
+    // Allocate control and geometric return matrices. These are 3xN because for better compatability with Julia
+    jl_value_t* array_type = jl_apply_array_type((jl_value_t*)jl_float64_type, 2);
+    jl_array_t* jl_path_ptr = jl_alloc_array_2d(array_type, state_dim, n_states);
+    jl_array_t* jl_ctrl_ptr = jl_alloc_array_2d(array_type, ctrl_dim, n_controls);
+    jlcxx::ArrayRef<double, 2> controls(jl_ctrl_ptr);
+    jlcxx::ArrayRef<double, 2> pathPoints(jl_path_ptr);
+
     // Control Extraction
+    for (size_t i = 0; i < n_controls; ++i) {
+        oc::RealVectorControlSpace::ControlType* c = pathControl->getControl(i)->as<oc::RealVectorControlSpace::ControlType>();
+        for (size_t j = 0; j < ctrl_dim; ++j) {
+            controls[j + i * ctrl_dim] = c->values[j];
+        }
+    }
 
     // Geometric Path Extraction
+    for (size_t i = 0; i < n_states; ++i) {
+        ob::SE2StateSpace::StateType* se2 = pathControl->getState(i)->as<ob::SE2StateSpace::StateType>();
+        // Wrap yaw to [-pi, pi] before output
+        double wrappedYaw = atan2(sin(se2->getYaw()), cos(se2->getYaw()));
 
+        pathPoints[i * 3] = se2->getX();
+        pathPoints[1+i * 3] = se2->getY();
+        pathPoints[2+i * 3] = wrappedYaw;
+    }
+
+    return std::make_tuple(foundSolution, controls, pathPoints);
 }
 
 /* =========== Port PlanWithSST to Julia ========== */
