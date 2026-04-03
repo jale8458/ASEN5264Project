@@ -9,6 +9,7 @@ find_package(Boost REQUIRED)
 find_package(ompl REQUIRED)
 find_package(Eigen3 3.3.4 REQUIRED)
 find_package(pybind11 REQUIRED)
+find_package(JlCxx REQUIRED)
 
 # NumPy include path
 execute_process(
@@ -27,33 +28,59 @@ set(MAIN_SRC src/main.cpp)
 
 # Get all other source files except main.cpp and mainCVAE.cpp
 file(GLOB OTHER_SOURCES "src/*.cpp" "Tools/*.cpp")
-list(FILTER OTHER_SOURCES EXCLUDE REGEX "src/main.cpp|src/mainCVAE.cpp")
+list(FILTER OTHER_SOURCES EXCLUDE REGEX "src/main.cpp|src/jl_lib.cpp")
 
-# Combine the main source with others
-set(SOURCES ${MAIN_SRC} ${OTHER_SOURCES})
+##### Julia library
+add_library(JlOMPL SHARED src/jl_lib.cpp ${OTHER_SOURCES})
 
-add_executable(OMPLTest ${SOURCES})
-
-# Suppress warnings
-target_compile_options(OMPLTest PRIVATE
-    -Wno-attributes
-    -Wno-deprecated-declarations
-    -Wno-cpp
+# Define absolute path to environment directory
+target_compile_definitions(JlOMPL PRIVATE 
+    ENV_DIR="${CMAKE_SOURCE_DIR}/environments/"
 )
 
 # Include directories
-target_include_directories(OMPLTest PRIVATE
+set(COMMON_INCLUDES
     include
     Tools
     ${Boost_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIRS}
     ${Python3_INCLUDE_DIRS}
     ${NUMPY_INCLUDE}
-    ${pybind11_INCLUDE_DIRS} 
+    ${pybind11_INCLUDE_DIRS}
 )
+target_include_directories(JlOMPL PRIVATE ${COMMON_INCLUDES})
 
 # Link libraries
-target_link_libraries(OMPLTest PRIVATE
+set(COMMON_LIBRARIES
     ompl::ompl
     ${Python3_LIBRARIES}
 )
+target_link_libraries(JlOMPL PRIVATE ${COMMON_LIBRARIES}
+    JlCxx::cxxwrap_julia
+)
+
+#/##### OMPL Executable Generation
+#/add_executable(OMPL ${MAIN_SRC} ${OTHER_SOURCES})
+
+#/# Suppress warnings
+#/target_compile_options(OMPL PRIVATE
+#/    -Wno-attributes
+#/    -Wno-deprecated-declarations
+#/    -Wno-cpp
+#/)
+
+#/# Define absolute path to environment directory
+#/target_compile_definitions(OMPL PRIVATE 
+#/    ENV_DIR="${CMAKE_SOURCE_DIR}/environments/"
+#/)
+
+#/# Include directories and libraries
+#/target_include_directories(OMPL PRIVATE ${COMMON_INCLUDES})
+#/target_link_libraries(OMPL PRIVATE ${COMMON_LIBRARIES})
+
+##### Install Julia library
+install(TARGETS
+  JlOMPL
+LIBRARY DESTINATION lib
+ARCHIVE DESTINATION lib
+RUNTIME DESTINATION lib)

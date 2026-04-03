@@ -6,3 +6,4 @@ build/
 *data_batch*
 *weights.h5
 animation/
+lib/

@@ -1,4 +1,4 @@
-#include "main.h"
+#include "jl_lib.h"
 
 std::tuple<ob::PlannerStatus, ob::PathPtr> SSTSolve(const oc::SpaceInformationPtr& si, const ob::ScopedState<ob::SE2StateSpace>& q_init, const ob::GoalPtr &q_goal, const double solveTime) {
     // Uses control problem formulation to plan with RRT in a SE2 state space
@@ -22,11 +22,7 @@ std::tuple<ob::PlannerStatus, ob::PathPtr> SSTSolve(const oc::SpaceInformationPt
     return std::make_tuple(solved, pdef->getSolutionPath());
 }
 
-int main() {
-
-    // Some parameters
-    const std::string obsFile = "normalParking.csv";
-
+SSTResult PlanWithSST(const std::string obsFile) {
     // Bounds
     ob::RealVectorBounds se2Bounds = ObsSpace2D::getBoundsGeneric();
     ob::RealVectorBounds cBounds(2);
@@ -76,29 +72,29 @@ int main() {
 
     auto [solved, path] = SSTSolve(si, start, goalRegion);
 
-    // Solution Checking
+    ///// Solution processing
+    // Solution Status
+    SSTResult result;
     if (solved == ob::PlannerStatus::EXACT_SOLUTION || solved == ob::PlannerStatus::APPROXIMATE_SOLUTION)
     {
-        // Print solution type
-        if (solved == ob::PlannerStatus::EXACT_SOLUTION) {
-            std::cout<<"Exact solution found.\n";
-        } else {
-            std::cout<<"No solution found. Plotting closest solution. \n";
-        }
-        
-        // Get solution path
-        og::PathGeometric geometricPath = path->as<oc::PathControl>()->asGeometric();
-
-        std::cout << "Starting visualization..." << std::endl;
-        // Get obstacles
-        std::vector<Obs2D> obstacles = std::static_pointer_cast<CollisionChecker2D>(si->getStateValidityChecker())->getObstacles();
-        
-        Visualizer::Plot2D(start, &geometricPath, obstacles);
-        // Visualizer::Plot2D(start, std::static_pointer_cast<CompoundGoalRegion>(goalRegion)->getGoal(), &geometricPath, obstacles);
-        Visualizer::showFigures();
-
+        std::cout<<"Exact solution found.\n";
+        result.foundSolution = true;
+    }
+    else if (solved == ob::PlannerStatus::APPROXIMATE_SOLUTION) {
+        std::cout<<"Solution not found. Returning nearest path.\n";
+        result.foundSolution = false;
     }
     else {
-        std::cout << "No solution found" << std::endl;
+        throw std::runtime_error("Unknown Solution Status.");
     }
+    // Control Extraction
+
+    // Geometric Path Extraction
+
+}
+
+/* =========== Port PlanWithSST to Julia ========== */
+
+JLCXX_MODULE define_julia_module(jlcxx::Module& mod) {
+    mod.method("PlanWithSST", &PlanWithSST);
 }

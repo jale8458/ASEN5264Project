@@ -13,7 +13,7 @@ std::vector<Obs2D> ObsSpace2D::getTestSpace() {
 
 std::vector<Obs2D> ObsSpace2D::getObstaclesCSV(const std::string& filename) {
     // Reads obstacles from "environments" folder
-    std::string filepath = "./../environments/" + filename;
+    std::string filepath = std::string(ENV_DIR) + filename;
     std::ifstream file(filepath);
     if (!file.is_open()) {
         throw std::runtime_error("Could not open file: " + filepath);
