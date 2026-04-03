@@ -30,7 +30,7 @@ namespace ObsSpace2D {
 
 class SE2GoalRegion : public ob::GoalRegion {
 public:
-    SE2GoalRegion(const ob::SpaceInformationPtr &si, const ob::ScopedState<ob::SE2StateSpace>& goal, double posTol, double angTol, double threshold = 1.0)
+    SE2GoalRegion(const ob::SpaceInformationPtr &si, const ob::ScopedState<ob::SE2StateSpace>& goal, double posTol, double angTol = M_PI/12.0, double threshold = 1.0)
         : ob::GoalRegion(si), goal_(goal), posTol_(posTol), angTol_(angTol) {setThreshold(threshold);}
     double distanceGoal(const ob::State *state) const override;
     const ob::ScopedState<ob::SE2StateSpace>& getGoal() const {return goal_;}
@@ -41,13 +41,13 @@ private:
 
 class CompoundGoalRegion : public ob::GoalRegion {
 public:
-    CompoundGoalRegion(const ob::SpaceInformationPtr &si, const ob::ScopedState<>& goal, double posTol, double angTol, double threshold = 1.0)
-        : ob::GoalRegion(si), goal_(goal), goalSS_(goal->as<ob::CompoundStateSpace::StateType>()->as<ob::SE2StateSpace::StateType>(0)), goalVel_(goal->as<ob::CompoundStateSpace::StateType>()->as<ob::RealVectorStateSpace::StateType>(1)), posTol_(posTol), angTol_(angTol) {setThreshold(threshold);}
+    CompoundGoalRegion(const ob::SpaceInformationPtr &si, const ob::ScopedState<>& goal, double posTol, double velTol, double angTol = M_PI/12.0, double threshold = 1.0)
+        : ob::GoalRegion(si), goal_(goal), goalSS_(goal->as<ob::CompoundStateSpace::StateType>()), goalVel_(goal->as<ob::CompoundStateSpace::StateType>()->as<ob::RealVectorStateSpace::StateType>(1)), posTol_(posTol), velTol_(velTol), angTol_(angTol) {setThreshold(threshold);}
     double distanceGoal(const ob::State *state) const override;
     const ob::ScopedState<>& getGoal() const {return goal_;}
 private:
     ob::ScopedState<> goal_;  // keeps memory alive
-    const ob::SE2StateSpace::StateType* goalSS_;
+    const ob::CompoundStateSpace::StateType* goalSS_;
     const ob::RealVectorStateSpace::StateType* goalVel_;
-    double posTol_, angTol_;
+    double posTol_, velTol_, angTol_;
 };

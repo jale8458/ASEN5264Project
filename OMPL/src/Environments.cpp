@@ -92,27 +92,42 @@ double SE2GoalRegion::distanceGoal(const ob::State *state) const {
 
     double dx = s->getX() - goal_[0];
     double dy = s->getY() - goal_[1];
-    double posDist = std::sqrt(dx*dx + dy*dy);
+    double normPosDist = std::sqrt(dx*dx + dy*dy)/posTol_;
 
     // atan2(sin/cos) to account for angle wrapping
     double dTheta = std::abs(std::atan2(std::sin(s->getYaw() - goal_[2]), std::cos(s->getYaw() - goal_[2])));
 
-    // Return worst-case normalized distance
-    return std::max(posDist / posTol_, dTheta / angTol_);
+    // If dTheta is within angTol_, then return posDist, otherwise return 1.0 + posDist (which never passes)
+    if (dTheta > angTol_) {
+        return 1.0 + normPosDist; 
+    } else{
+        return normPosDist;
+    }
 }
 
 // ========== CompoundGoalRegion ==========
 double CompoundGoalRegion::distanceGoal(const ob::State *state) const {
+    // Get goal state
+    const ob::SE2StateSpace::StateType* goalSE2 = goalSS_->as<ob::SE2StateSpace::StateType>(0);
+    const double goalVel = goalSS_->as<ob::RealVectorStateSpace::StateType>(1)->values[0];
+    // Get current state
     const auto* s = state->as<ob::CompoundStateSpace::StateType>()->as<ob::SE2StateSpace::StateType>(0);
-    const auto* vel = state->as<ob::CompoundStateSpace::StateType>()->as<ob::RealVectorStateSpace::StateType>(1);
+    const double vel = state->as<ob::CompoundStateSpace::StateType>()->as<ob::RealVectorStateSpace::StateType>(1)->values[0];
 
-    double dx = s->getX() - goalSS_->getX();
-    double dy = s->getY() - goalSS_->getY();
-    double posDist = std::sqrt(dx*dx + dy*dy);
+    double dx = s->getX() - goalSE2->getX();
+    double dy = s->getY() - goalSE2->getY();
+    double normPosDist = std::sqrt(dx*dx + dy*dy)/posTol_;
+
+    // Delta in velocity
+    double dv = abs(vel - goalVel);
 
     // atan2(sin/cos) to account for angle wrapping
-    double dTheta = std::abs(std::atan2(std::sin(s->getYaw() - goalSS_->getYaw()), std::cos(s->getYaw() - goalSS_->getYaw())));
+    double dTheta = std::abs(std::atan2(std::sin(s->getYaw() - goalSE2->getYaw()), std::cos(s->getYaw() - goalSE2->getYaw())));
 
-    // Return worst-case normalized distance
-    return std::max(posDist / posTol_, dTheta / angTol_);
+    // If dTheta is within angTol_ AND dv is within velTol_, then return posDist, otherwise return 1.0 + posDist (which never passes)
+    if (dTheta > angTol_ || dv > velTol_) {
+        return 1.0 + normPosDist; 
+    } else{
+        return normPosDist;
+    }
 }
