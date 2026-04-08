@@ -28,11 +28,12 @@ class Integrator : public oc::StatePropagator {
 class SimpleUnicycle : public Integrator {
     // Simple car with acceleration controls
     public:
-        SimpleUnicycle(oc::SpaceInformationPtr &si, const double r = 1) : Integrator(si), r(r) {}
+        SimpleUnicycle(oc::SpaceInformationPtr &si, const double angleBias = 0.0, const double r = 0.5) : Integrator(si), angleBias(angleBias), r(r) {}
     protected:
         void setStateUsingDelta(ob::State *state, const ob::State *stateRef, const Eigen::VectorXd &dx) const override;
         Eigen::VectorXd dynamics(const ob::State *x, const oc::Control *control) const override;
     private:
+        double angleBias; // Angle bias in dynamics [rad]
         double r; // Radius of wheel
 };
 

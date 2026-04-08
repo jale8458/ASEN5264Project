@@ -57,22 +57,24 @@ int main() {
     si->setPropagationStepSize(0.1);
     si->setMinMaxControlDuration(1, 10);
 
-    // Start point
-    ob::ScopedState<ob::SE2StateSpace> se2Start(se2Space);
-    se2Start->setX(0.0);
-    se2Start->setY(7.0);
-    se2Start->setYaw(0.0);
-    ob::ScopedState<> start(sSpace);
-    start << se2Start;
+    auto [start, goal] = ObsSpace2D::getStartGoal(si, "normalParkingEndpoints.csv");
 
-    // Goal region
-    ob::ScopedState<ob::SE2StateSpace> se2Goal(se2Space);
-    se2Goal->setX(5.0);
-    se2Goal->setY(4.0);
-    se2Goal->setYaw(-M_PI/2);
-    ob::ScopedState<> goal(sSpace);
-    goal << se2Goal;
-    ob::GoalPtr goalRegion = std::make_shared<SE2GoalRegion>(si, goal, 0.5, 0.5);
+    // // Start point
+    // ob::ScopedState<ob::SE2StateSpace> se2Start(se2Space);
+    // se2Start->setX(0.0);
+    // se2Start->setY(7.0);
+    // se2Start->setYaw(0.0);
+    // ob::ScopedState<> start(sSpace);
+    // start << se2Start;
+
+    // // Goal region
+    // ob::ScopedState<ob::SE2StateSpace> se2Goal(se2Space);
+    // se2Goal->setX(5.0);
+    // se2Goal->setY(4.0);
+    // se2Goal->setYaw(-M_PI/2);
+    // ob::ScopedState<> goal(sSpace);
+    // goal << se2Goal;
+    ob::GoalPtr goalRegion = std::make_shared<SE2GoalRegion>(si, goal, 0.5);
 
     auto [solved, path] = SSTSolve(si, start, goalRegion);
 

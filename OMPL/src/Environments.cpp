@@ -40,6 +40,91 @@ std::vector<Obs2D> ObsSpace2D::getObstaclesCSV(const std::string& filename) {
     return obstacles;
 }
 
+std::tuple<ob::ScopedState<>, ob::ScopedState<>> ObsSpace2D::getStartGoal(ompl::control::SpaceInformationPtr& si, const std::string& filename) {
+    // Reads start and goal states from "environments" folder
+    std::string filepath = std::string(ENV_DIR) + filename;
+    std::ifstream file(filepath);
+    if (!file.is_open()) {
+        throw std::runtime_error("Could not open file: " + filepath);
+    }
+
+    ob::StateSpacePtr ss = si->getStateSpace();
+    int ssType(ss->getType());
+    ob::ScopedState<> start(ss);
+    ob::ScopedState<> goal(ss);
+    if (ssType == ob::StateSpaceType::STATE_SPACE_SE2) {
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty()) continue;
+
+            std::stringstream lineStream(line);
+            std::string pointType;
+            double x, y, theta;
+            char comma;
+            if (lineStream >> pointType >> x >> comma >> y >> comma >> theta) {
+                if (pointType == "start,") {
+                    start->as<ob::SE2StateSpace::StateType>()->setX(x);
+                    start->as<ob::SE2StateSpace::StateType>()->setY(y);
+                    start->as<ob::SE2StateSpace::StateType>()->setYaw(theta);
+                }
+                else if (pointType == "goal,") {
+                    goal->as<ob::SE2StateSpace::StateType>()->setX(x);
+                    goal->as<ob::SE2StateSpace::StateType>()->setY(y);
+                    goal->as<ob::SE2StateSpace::StateType>()->setYaw(theta);
+                }
+                else {
+                    throw ompl::Exception("Invalid point specification in CSV line: " + line);
+                }
+            } else {
+                throw ompl::Exception("Invalid line specification in CSV line: " + line);
+            }
+        }
+        return std::make_tuple(start, goal);
+    } else if (ssType == ob::StateSpaceType::STATE_SPACE_UNKNOWN) {
+        ob::StateSpacePtr se2Space = ss->as<ob::CompoundStateSpace>()->getSubspace(0);
+        ob::StateSpacePtr velSpace = ss->as<ob::CompoundStateSpace>()->getSubspace(1);
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty()) continue;
+
+            std::stringstream lineStream(line);
+            std::string pointType;
+            double x, y, theta, v, delta;
+            char comma;
+            if (lineStream >> pointType >> comma >> x >> comma >> y >> comma >> theta >> comma >> v >> comma >> delta) {
+                if (pointType == "start") {
+                    ob::ScopedState<ob::SE2StateSpace> se2Start(se2Space);
+                    se2Start->setX(x);
+                    se2Start->setY(y);
+                    se2Start->setYaw(theta);
+                    ob::ScopedState<ob::RealVectorStateSpace> velStart(velSpace);
+                    velStart->values[0] = v;
+                    velStart->values[1] = delta;
+                    start << se2Start << velStart;
+                }
+                else if (pointType == "goal") {
+                    ob::ScopedState<ob::SE2StateSpace> se2Goal(se2Space);
+                    se2Goal->setX(x);
+                    se2Goal->setY(y);
+                    se2Goal->setYaw(theta);
+                    ob::ScopedState<ob::RealVectorStateSpace> velGoal(velSpace);
+                    velGoal->values[0] = v;
+                    velGoal->values[1] = delta;
+                    goal << se2Goal << velGoal;
+                }
+                else {
+                    throw ompl::Exception("Invalid obstacle specification in CSV line: " + line);
+                }
+            } else {
+                throw ompl::Exception("Invalid obstacle specification in CSV line: " + line);
+            }
+        }
+        return std::make_tuple(start, goal);
+    } else {
+        throw ompl::Exception("Unknown state space type");
+    }
+}
+
 // WORKSPACE SPECIFIC FUNCTIONS
 ompl::base::RealVectorBounds ObsSpace2D::getBoundsHW2WS2() {
     ompl::base::RealVectorBounds bounds(2);

@@ -56,7 +56,7 @@ Eigen::VectorXd SimpleUnicycle::dynamics(const ob::State *x, const oc::Control *
     // Dynamics
     dx[0] = u[0] * r * cos(theta);
     dx[1] = u[0] * r * sin(theta);
-    dx[2] = u[1];
+    dx[2] = u[1] + angleBias;
 
     return dx;
 }

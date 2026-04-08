@@ -9,6 +9,7 @@
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/goals/GoalRegion.h>
 #include <ompl/base/ScopedState.h>
+#include <ompl/control/SpaceInformation.h>
 
 #include "CollisionCheckers.h"
 
@@ -18,6 +19,7 @@ using Obs2D = std::vector<Eigen::Vector2d>; // Contains vertices in CCW Order
 namespace ObsSpace2D {
     std::vector<Obs2D> getTestSpace();
     std::vector<Obs2D> getObstaclesCSV(const std::string& filename);
+    std::tuple<ob::ScopedState<>, ob::ScopedState<>> getStartGoal(ompl::control::SpaceInformationPtr& si, const std::string& filename);
 
     // WORKSPACE SPECIFIC FUNCTIONS
     ompl::base::RealVectorBounds getBoundsHW2WS2();

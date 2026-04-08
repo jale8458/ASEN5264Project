@@ -22,7 +22,7 @@ std::tuple<ob::PlannerStatus, ob::PathPtr> SSTSolve(const oc::SpaceInformationPt
     return std::make_tuple(solved, pdef->getSolutionPath());
 }
 
-std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> PlanWithSST(const std::string obsFile, const double solveTime) {
+std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> PlanWithSST(const std::string obsFile, const std::string endpointsFile, const double angleBias, const double solveTime) {
     // Bounds
     ob::RealVectorBounds se2Bounds = ObsSpace2D::getBoundsGeneric();
     ob::RealVectorBounds cBounds(2);
@@ -45,7 +45,7 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::
 
     // Setup SpaceInformation/Collision Checker
     oc::SpaceInformationPtr si = std::make_shared<oc::SpaceInformation>(sSpace, cSpace);
-    std::shared_ptr<SimpleUnicycle> propagator = std::make_shared<SimpleUnicycle>(si);
+    std::shared_ptr<SimpleUnicycle> propagator = std::make_shared<SimpleUnicycle>(si, angleBias);
     si->setStatePropagator(propagator);
     si->setStateValidityChecker(std::make_shared<PointCollChecker2D>(si, obstacles));
     //// NOTE: Hard coded
@@ -53,22 +53,9 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::
     si->setPropagationStepSize(0.1);
     si->setMinMaxControlDuration(1, 10);
 
-    // Start point
-    ob::ScopedState<ob::SE2StateSpace> se2Start(se2Space);
-    se2Start->setX(0.0);
-    se2Start->setY(7.0);
-    se2Start->setYaw(0.0);
-    ob::ScopedState<> start(sSpace);
-    start << se2Start;
-
-    // Goal region
-    ob::ScopedState<ob::SE2StateSpace> se2Goal(se2Space);
-    se2Goal->setX(5.0);
-    se2Goal->setY(4.0);
-    se2Goal->setYaw(-M_PI/2);
-    ob::ScopedState<> goal(sSpace);
-    goal << se2Goal;
-    ob::GoalPtr goalRegion = std::make_shared<SE2GoalRegion>(si, goal, 0.5, 0.5);
+    // Start & Goal regions
+    auto [start, goal] = ObsSpace2D::getStartGoal(si, endpointsFile);
+    ob::GoalPtr goalRegion = std::make_shared<SE2GoalRegion>(si, goal, 0.5);
 
     auto [solved, path] = SSTSolve(si, start, goalRegion, solveTime);
     return ProcessPath(solved, path, si);
