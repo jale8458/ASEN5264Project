@@ -22,7 +22,7 @@ std::tuple<ob::PlannerStatus, ob::PathPtr> SSTSolve(const oc::SpaceInformationPt
     return std::make_tuple(solved, pdef->getSolutionPath());
 }
 
-std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 2>> PlanWithSST(const std::string obsFile, const double solveTime) {
+std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> PlanWithSST(const std::string obsFile, const double solveTime) {
     // Bounds
     ob::RealVectorBounds se2Bounds = ObsSpace2D::getBoundsGeneric();
     ob::RealVectorBounds cBounds(2);
@@ -74,7 +74,7 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 2>> PlanWit
     return ProcessPath(solved, path, si);
 }
 
-std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 2>> ProcessPath(const ob::PlannerStatus& solved, const ob::PathPtr& path, const oc::SpaceInformationPtr& si) {
+std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> ProcessPath(const ob::PlannerStatus& solved, const ob::PathPtr& path, const oc::SpaceInformationPtr& si) {
     /// Solution processing -> Boolean & Julia matrices
     oc::PathControl* pathControl = path->as<oc::PathControl>();
 
@@ -85,7 +85,7 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 2>> Process
 
     // Solution Status
     bool foundSolution;
-    if (solved == ob::PlannerStatus::EXACT_SOLUTION || solved == ob::PlannerStatus::APPROXIMATE_SOLUTION)
+    if (solved == ob::PlannerStatus::EXACT_SOLUTION)
     {
         std::cout<<"Exact solution found.\n";
         foundSolution = true;
@@ -98,19 +98,24 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 2>> Process
         throw std::runtime_error("Unknown Solution Status.");
     }
 
-    // Allocate control and geometric return matrices. These are 3xN because for better compatability with Julia
+    // Allocate control and geometric return matrices. These are 3xN
     jl_value_t* array_type = jl_apply_array_type((jl_value_t*)jl_float64_type, 2);
+    jl_value_t* durations_type = jl_apply_array_type((jl_value_t*)jl_float64_type, 1);
     jl_array_t* jl_path_ptr = jl_alloc_array_2d(array_type, state_dim, n_states);
     jl_array_t* jl_ctrl_ptr = jl_alloc_array_2d(array_type, ctrl_dim, n_controls);
+    jl_array_t* jl_durations_ptr = jl_alloc_array_1d(durations_type, n_controls);
     jlcxx::ArrayRef<double, 2> controls(jl_ctrl_ptr);
+    jlcxx::ArrayRef<double, 1> controlDurations(jl_durations_ptr);
     jlcxx::ArrayRef<double, 2> pathPoints(jl_path_ptr);
 
-    // Control Extraction
+    // Control and DurationExtraction
     for (size_t i = 0; i < n_controls; ++i) {
         oc::RealVectorControlSpace::ControlType* c = pathControl->getControl(i)->as<oc::RealVectorControlSpace::ControlType>();
+        double duration = pathControl->getControlDuration(i);
         for (size_t j = 0; j < ctrl_dim; ++j) {
-            controls[j + i * ctrl_dim] = c->values[j];
+            controls[j+i*ctrl_dim] = c->values[j];
         }
+        controlDurations[i] = duration;
     }
 
     // Geometric Path Extraction
@@ -119,12 +124,12 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 2>> Process
         // Wrap yaw to [-pi, pi] before output
         double wrappedYaw = atan2(sin(se2->getYaw()), cos(se2->getYaw()));
 
-        pathPoints[i * 3] = se2->getX();
-        pathPoints[1+i * 3] = se2->getY();
-        pathPoints[2+i * 3] = wrappedYaw;
+        pathPoints[i*3] = se2->getX();
+        pathPoints[1+i*3] = se2->getY();
+        pathPoints[2+i*3] = wrappedYaw;
     }
 
-    return std::make_tuple(foundSolution, controls, pathPoints);
+    return std::make_tuple(foundSolution, controls, controlDurations, pathPoints);
 }
 
 /* =========== Port PlanWithSST to Julia ========== */

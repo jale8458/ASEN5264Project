@@ -26,5 +26,5 @@ namespace og = ompl::geometric;
 namespace oc = ompl::control;
 
 std::tuple<ob::PlannerStatus, ob::PathPtr> SSTSolve(const oc::SpaceInformationPtr& si, const ob::ScopedState<ob::SE2StateSpace>& q_init, const ob::GoalPtr &q_goal, const double solveTime = 10.0);
-std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 2>> PlanWithSST(const std::string obsFile = "normalParking.csv", const double solveTime = 10.0);
-std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 2>> ProcessPath(const ob::PlannerStatus& solved, const ob::PathPtr& path, const oc::SpaceInformationPtr& si);
+std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> PlanWithSST(const std::string obsFile = "normalParking.csv", const double solveTime = 10.0);
+std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> ProcessPath(const ob::PlannerStatus& solved, const ob::PathPtr& path, const oc::SpaceInformationPtr& si);
