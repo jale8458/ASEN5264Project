@@ -5,12 +5,17 @@ using Plots
 import POMDPs
 using POMDPs: actions, @gen, isterminal, discount, statetype, actiontype, simulate, states, initialstate
 
+# Load custom ompl planning library into CppOMPL module, if not already loaded
+if !isdefined(Main, :CppOMPL)
+    include(joinpath(@__DIR__, "loadCppModule.jl"))
+end
+
 const max_fails = 5
 const dt = 0.1
 const turn_bias = 0.35
-const collision_penalty = 100.0
+const collision_penalty = -100.0
 const goal_reward = 100.0
-const replan_cost = 2.0
+const replan_cost = -2.0
 
 # Current active plan returned by planner
 current_path = Vector{Vector{Float64}}()
@@ -189,7 +194,7 @@ main_pomdp = QuickPOMDP(
             # Penalize repeated failures
             fail_penalty = num_fails
 
-            return progress_reward - plan_penalty - fail_penalty
+            return progress_reward + plan_penalty + fail_penalty
         end
     end,
 
