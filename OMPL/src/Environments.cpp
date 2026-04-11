@@ -91,8 +91,8 @@ std::tuple<ob::ScopedState<>, ob::ScopedState<>> ObsSpace2D::getStartGoal(ompl::
             std::string pointType;
             double x, y, theta, v, delta;
             char comma;
-            if (lineStream >> pointType >> comma >> x >> comma >> y >> comma >> theta >> comma >> v >> comma >> delta) {
-                if (pointType == "start") {
+            if (lineStream >> pointType >> x >> comma >> y >> comma >> theta >> comma >> v >> comma >> delta) {
+                if (pointType == "start,") {
                     ob::ScopedState<ob::SE2StateSpace> se2Start(se2Space);
                     se2Start->setX(x);
                     se2Start->setY(y);
@@ -102,7 +102,7 @@ std::tuple<ob::ScopedState<>, ob::ScopedState<>> ObsSpace2D::getStartGoal(ompl::
                     velStart->values[1] = delta;
                     start << se2Start << velStart;
                 }
-                else if (pointType == "goal") {
+                else if (pointType == "goal,") {
                     ob::ScopedState<ob::SE2StateSpace> se2Goal(se2Space);
                     se2Goal->setX(x);
                     se2Goal->setY(y);
