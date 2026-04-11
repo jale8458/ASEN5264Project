@@ -1,58 +1,60 @@
+using POMDPs: actions, @gen, isterminal, discount, statetype, actiontype, simulate, states, initialstate, solve
 using QuickPOMDPs: QuickPOMDP
-using POMDPTools: Deterministic, Uniform, SparseCat, FunctionPolicy, RolloutSimulator
+using POMDPTools: Deterministic, Uniform, SparseCat, FunctionPolicy, RolloutSimulator, DiscreteUpdater
 using Statistics: mean, std
 using Plots
-import POMDPs
-using POMDPs: actions, @gen, isterminal, discount, statetype, actiontype, simulate, states, initialstate
+using SARSOP: SARSOPSolver
+using QMDP: QMDPSolver
 
 ############
 # Baseline POMDP
 ############
 
-const max_fails = 5
+const max_fail_penalty = 5
 
 wheel_failure_pomdp = QuickPOMDP(
-    # Enumerate all state combinations (e.g. (:healthy, num_fails = 0), (:stuck, num_fails =3) )
-    states = [(mode, num_fails) for mode in (:healthy, :stuck) for num_fails in 0:max_fails],
+    # Enumerate all state combinations (e.g. (:healthy, fail_penalty = 1), (:stuck, fail_penalty =3) )
+    states = [(mode, fail_penalty) for mode in (:healthy, :stuck) for fail_penalty in 1:max_fail_penalty],
     actions = [:healthy_action, :stuck_action],
     observations = [:wheel_healthy, :wheel_stuck],
 
     transition = function(s, a)
-        mode, num_fails = s # unpack state
+        mode, fail_penalty = s # unpack state
 
         # Latent wheel state switches with small probability
         if mode == :healthy
-            # State is healthy and action is correcrt
+            # State is healthy and action is correct
             if a == :healthy_action
                 return SparseCat(
-                    [(:healthy, 0), (:stuck, min(num_fails+1, max_fails))], # Reset num_fails to 0 and state transition
+                    [(:healthy, 1), (:stuck, 1)], # Reset fail_penalty to 1 and state transition
                     [0.99, 0.01])
             else
                 # State is healthy and action is incorrect 
                 return SparseCat(
-                    [(:healthy, min(num_fails+1, max_fails)), (:stuck, 0)], # Increment num_fails and state transition
+                    [(:healthy, min(fail_penalty+1, max_fail_penalty)), (:stuck, min(fail_penalty+1, max_fail_penalty))], # Increment fail_penalty and state transition
                     [0.99, 0.01]
                 )
             end
-        else
+        else # mode == :stuck
             if a == :stuck_action
                 # State is stuck and action is correct
                 return SparseCat(
-                    [(:stuck, 0), (:healthy, min(num_fails+1, max_fails))], # Reset num_fails to 0 and state transition
+                    [(:stuck, 1), (:healthy, 1)], # Reset fail_penalty to 1 and state transition
                     [0.99, 0.01])
             else
                 return SparseCat(
-                    [(:stuck, min(num_fails+1, max_fails)), (:healthy, 0)], # Increment num_fails and state transition
+                    [(:stuck, min(fail_penalty+1, max_fail_penalty)), (:healthy, min(fail_penalty+1, max_fail_penalty))], # Increment fail_penalty and state transition
                     [0.99, 0.01]
                 )
             end
         end
     end,
 
-    observation = function(a, sp)
-        next_mode, num_fails = sp
+    observation = function(s, a, sp)
+        # Observation based on PRIOR state only
+        mode, fail_penalty = s
         
-        if next_mode == :healthy 
+        if mode == :healthy 
             # Sensor is 80% accurate 
             return SparseCat([:wheel_healthy, :wheel_stuck], [0.80, 0.20])
         else
@@ -60,68 +62,57 @@ wheel_failure_pomdp = QuickPOMDP(
         end
     end, 
 
-    reward = function (s, a, sp)
-        mode, num_fails = sp # unpack state
+    reward = function (s, a)
+        mode, fail_penalty = s # unpack state
 
         correct_prediction = (a == :healthy_action && mode == :healthy) || 
                              (a == :stuck_action && mode == :stuck)
         if correct_prediction
-            return 2.0 - num_fails
+            return 1.0
         else
-            return -1.0 * num_fails 
+            return -2.0 * fail_penalty 
         end
     end,
            
-    initialstate = Deterministic((:healthy, 0)), # Realistic assumption that initial state is healthy
+    initialstate = Deterministic((:healthy, 1)), # Realistic assumption that initial state is healthy
     discount = 0.95,
     isterminal = s -> false
-
 )
 
-# Evaluate with a policy that always takes healthy action
-function always_healthy(mdp, s)
-    return :healthy_action
-end
+############
+# Solvers
+############
 
-# Evaluate with a policy that always takes stuck action
-function always_stuck(mdp, s)
-    return :stuck_action
-end
+# Updater
+up = DiscreteUpdater(wheel_failure_pomdp)
 
-# Rollout function 
-function rollout(mdp, policy_function, s, max_steps=100)
-    # fill this in with code from the assignment document
-    r_total = 0.0
-    t = 0
-    while !isterminal(mdp, s) && t < max_steps
-        a = policy_function(mdp, s) 
-        s, r = @gen(:sp,:r)(mdp, s, a)
-        r_total += discount(mdp)^t*r
-        t += 1 
-    end 
-    return r_total 
-end
+# Policies
+π_healthy = FunctionPolicy(b -> :healthy_action)
+π_stuck = FunctionPolicy(b -> :stuck_action)
+π_qmdp = solve(QMDPSolver(), wheel_failure_pomdp)
 
 ############
 # Monte Carlo evaluation
 ############
 
-# evaluate with a policy that always waits
-results_healthy = [
-    rollout(wheel_failure_pomdp, always_healthy, rand(initialstate(wheel_failure_pomdp)), 100)
-    for _ in 1:100000
-]
+# Parameters
+numRuns = 5000
+maxSteps = 500
 
+# Always assumes wheel is healthy
+results_healthy = [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_healthy, up) for _ in 1:numRuns]
 println("Always healthy policy:")
-@show sample_mean_healthy = mean(results_healthy)
+@show μ_healthy = mean(results_healthy)
 @show SEM_healthy = std(results_healthy) / sqrt(length(results_healthy))
 
-
-results_stuck = [
-    rollout(wheel_failure_pomdp, always_stuck, rand(initialstate(wheel_failure_pomdp)), 100)
-    for _ in 1:100000
-]
-
+# Always assumes wheel is stuck
+results_stuck = [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_stuck, up) for _ in 1:numRuns]
 println("\nAlways stuck policy:")
-@show sample_mean_stuck = mean(results_stuck)
+@show μ_stuck = mean(results_stuck)
 @show SEM_stuck = std(results_stuck) / sqrt(length(results_stuck))
+
+# QMDP
+results_qmdp = [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_qmdp, up) for _ in 1:numRuns]
+println("\nQMDP policy:")
+@show μ_QMDP = mean(results_qmdp)
+@show SEM_stuck = std(results_qmdp) / sqrt(length(results_qmdp))
