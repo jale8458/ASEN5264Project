@@ -6,3 +6,5 @@ build/
 *weights.h5
 animation/
 lib/
+*.pomdpx
+*.out

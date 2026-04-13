@@ -1,16 +1,22 @@
-using POMDPs: actions, @gen, isterminal, discount, statetype, actiontype, simulate, states, initialstate, solve
+using POMDPs
 using QuickPOMDPs: QuickPOMDP
-using POMDPTools: Deterministic, Uniform, SparseCat, FunctionPolicy, RolloutSimulator, DiscreteUpdater
+using POMDPTools: Deterministic, Uniform, SparseCat, FunctionPolicy, RolloutSimulator, DiscreteUpdater, UnderlyingMDP
 using Statistics: mean, std
 using Plots
+using ProgressMeter
+# Solvers
 using SARSOP: SARSOPSolver
 using QMDP: QMDPSolver
+using DiscreteValueIteration: ValueIterationSolver
+using BasicPOMCP
 
 ############
 # Baseline POMDP
 ############
+@info "Generating POMDP"
 
 const max_fail_penalty = 5
+const p_fail = 0.01
 
 wheel_failure_pomdp = QuickPOMDP(
     # Enumerate all state combinations (e.g. (:healthy, fail_penalty = 1), (:stuck, fail_penalty =3) )
@@ -27,12 +33,12 @@ wheel_failure_pomdp = QuickPOMDP(
             if a == :healthy_action
                 return SparseCat(
                     [(:healthy, 1), (:stuck, 1)], # Reset fail_penalty to 1 and state transition
-                    [0.99, 0.01])
+                    [1-p_fail, p_fail])
             else
                 # State is healthy and action is incorrect 
                 return SparseCat(
                     [(:healthy, min(fail_penalty+1, max_fail_penalty)), (:stuck, min(fail_penalty+1, max_fail_penalty))], # Increment fail_penalty and state transition
-                    [0.99, 0.01]
+                    [1-p_fail, p_fail]
                 )
             end
         else # mode == :stuck
@@ -40,11 +46,11 @@ wheel_failure_pomdp = QuickPOMDP(
                 # State is stuck and action is correct
                 return SparseCat(
                     [(:stuck, 1), (:healthy, 1)], # Reset fail_penalty to 1 and state transition
-                    [0.99, 0.01])
+                    [1-p_fail, p_fail])
             else
                 return SparseCat(
                     [(:stuck, min(fail_penalty+1, max_fail_penalty)), (:healthy, min(fail_penalty+1, max_fail_penalty))], # Increment fail_penalty and state transition
-                    [0.99, 0.01]
+                    [1-p_fail, p_fail]
                 )
             end
         end
@@ -82,6 +88,7 @@ wheel_failure_pomdp = QuickPOMDP(
 ############
 # Solvers
 ############
+@info "Generating Solvers"
 
 # Updater
 up = DiscreteUpdater(wheel_failure_pomdp)
@@ -91,28 +98,67 @@ up = DiscreteUpdater(wheel_failure_pomdp)
 π_stuck = FunctionPolicy(b -> :stuck_action)
 π_qmdp = solve(QMDPSolver(), wheel_failure_pomdp)
 
+# Value Iteration from POMDP
+function value_iteration(m)
+    solver = ValueIterationSolver(max_iterations=1000, belres=1e-6)
+    policy = solve(solver, UnderlyingMDP(m))
+    return policy.util  # this IS the value vector you index with stateindex
+end
+
+# POMCP Solver
+function pomcp_solve(m) # this function makes capturing m in the rollout policy more efficient
+    # Use the value iteration estimate as the estimate value
+    V = value_iteration(m)
+    solver = POMCPSolver(tree_queries=500,
+                         max_depth=20,
+                         c=1.0,
+                         default_action= ExceptionRethrow(),
+                         estimate_value= (m, s, h::BeliefNode, steps) -> V[stateindex(m,s)])
+    return solve(solver, m)
+end
+
+# POMCP policy
+π_pomcp = pomcp_solve(wheel_failure_pomdp)
+
+##### NOTE: SARSOP only works when sp is the observation
+# using SARSOP
+
+# solver = SARSOPSolver(precision=1e-6, timeout=30.0)
+# π_sarsop = solve(solver, wheel_failure_pomdp)
+# results_sarsop = @showprogress "Running SARSOP Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_sarsop, up) for _ in 1:numRuns]
+# @info "Always stuck policy:"
+# @show μ_sarsop = mean(results_sarsop)
+# @show SEM_sarsop = std(results_sarsop) / sqrt(length(results_stuck))
+
 ############
 # Monte Carlo evaluation
 ############
+@info "Monte Carlo Evaluations"
 
 # Parameters
-numRuns = 5000
+numRuns = 100
 maxSteps = 500
 
 # Always assumes wheel is healthy
-results_healthy = [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_healthy, up) for _ in 1:numRuns]
-println("Always healthy policy:")
+results_healthy = @showprogress "Running Healthy Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_healthy, up) for _ in 1:numRuns]
+@info "Always healthy policy:"
 @show μ_healthy = mean(results_healthy)
 @show SEM_healthy = std(results_healthy) / sqrt(length(results_healthy))
 
 # Always assumes wheel is stuck
-results_stuck = [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_stuck, up) for _ in 1:numRuns]
-println("\nAlways stuck policy:")
+results_stuck = @showprogress "Running Stuck Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_stuck, up) for _ in 1:numRuns]
+@info "Always stuck policy:"
 @show μ_stuck = mean(results_stuck)
 @show SEM_stuck = std(results_stuck) / sqrt(length(results_stuck))
 
 # QMDP
-results_qmdp = [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_qmdp, up) for _ in 1:numRuns]
-println("\nQMDP policy:")
+results_qmdp = @showprogress "Running QMDP Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_qmdp, up) for _ in 1:numRuns]
+@info "QMDP policy:"
 @show μ_QMDP = mean(results_qmdp)
-@show SEM_stuck = std(results_qmdp) / sqrt(length(results_qmdp))
+@show SEM_QMDP = std(results_qmdp) / sqrt(length(results_qmdp))
+
+# POMCP
+results_pomcp = @showprogress "Running POMCP Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_pomcp, up) for _ in 1:numRuns]
+@info "POMCP policy:"
+@show μ_POMCP = mean(results_pomcp)
+@show SEM_POMCP = std(results_pomcp) / sqrt(length(results_pomcp))
