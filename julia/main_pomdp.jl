@@ -30,9 +30,9 @@ end
 # Helper function: set active plan
 function set_active_plan(plan_type)
     if plan_type == :nominal
-        result = CppOMPL.PlanWithSST("normalParking.csv")
+        result = CppOMPL.PlanWithSST("normalParking.csv", "normalParkingEndpoints.csv", 0.0, 5.0)
     else
-        result = CppOMPL.PlanWithSST("normalParking.csv")   # placeholder for panner with failed dynamics
+        result = CppOMPL.PlanWithSST("normalParking.csv", "normalParkingEndpoints.csv", 1.0, 5.0)   # placeholder for panner with failed dynamics
     end
     global current_path = result.pathPoints
     global current_controls = result.controls
@@ -90,7 +90,7 @@ main_pomdp = QuickPOMDP(
     # ((x, y, theta), mode, num_fails, plan_index, plan_type)
     states = [((0.0, 7.0, 0.0), :healthy, 0, 1, :nominal)],
     actions = [:continue_plan, :replan_nominal, :replan_failure],
-    observations = [:small_error, :large_error, :collision_obs, :goal_obs],
+    observations = [:small_error, :large_error],
 
     transition = function(s, a)
         x, mode, num_fails, plan_index, plan_type = s
@@ -149,11 +149,11 @@ main_pomdp = QuickPOMDP(
     observation = function(a, sp)
         # placeholder for observations
         x, mode, num_fails, plan_index, plan_type = sp
-        if in_collision(x)
-            return Deterministic(:collision_obs)
-        elseif reached_goal(x)
-            return Deterministic(:goal_obs)
-        else
+        # if in_collision(x)
+        #     return Deterministic(:collision_obs)
+        # elseif reached_goal(x)
+        #     return Deterministic(:goal_obs)
+        # else
             x_plan = get_planned_state(plan_index)
             if x_plan === nothing
                 return Deterministic(:large_error)
@@ -164,7 +164,8 @@ main_pomdp = QuickPOMDP(
                     return SparseCat([:small_error, :large_error], [0.90, 0.10])
                 end
             end
-        end
+            #### else return Deterministic(:large_error)
+        # end
     end,
 
     reward = function(s, a, sp)

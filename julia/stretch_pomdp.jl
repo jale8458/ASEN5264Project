@@ -5,7 +5,7 @@ using Statistics: mean, std
 using Plots
 using ProgressMeter
 # Solvers
-# using SARSOP: SARSOPSolver
+using SARSOP: SARSOPSolver
 using QMDP: QMDPSolver
 using DiscreteValueIteration: ValueIterationSolver
 using BasicPOMCP
@@ -133,32 +133,32 @@ end
 ############
 # Monte Carlo evaluation
 ############
-@info "Monte Carlo Evaluations"
+# @info "Monte Carlo Evaluations"
 
-# Parameters
-numRuns = 100
-maxSteps = 500
+# # Parameters
+# numRuns = 100
+# maxSteps = 500
 
-# Always assumes wheel is healthy
-results_healthy = @showprogress "Running Healthy Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_healthy, up) for _ in 1:numRuns]
-@info "Always healthy policy:"
-@show μ_healthy = mean(results_healthy)
-@show SEM_healthy = std(results_healthy) / sqrt(length(results_healthy))
+# # Always assumes wheel is healthy
+# results_healthy = @showprogress "Running Healthy Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_healthy, up) for _ in 1:numRuns]
+# @info "Always healthy policy:"
+# @show μ_healthy = mean(results_healthy)
+# @show SEM_healthy = std(results_healthy) / sqrt(length(results_healthy))
 
-# Always assumes wheel is stuck
-results_stuck = @showprogress "Running Stuck Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_stuck, up) for _ in 1:numRuns]
-@info "Always stuck policy:"
-@show μ_stuck = mean(results_stuck)
-@show SEM_stuck = std(results_stuck) / sqrt(length(results_stuck))
+# # Always assumes wheel is stuck
+# results_stuck = @showprogress "Running Stuck Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_stuck, up) for _ in 1:numRuns]
+# @info "Always stuck policy:"
+# @show μ_stuck = mean(results_stuck)
+# @show SEM_stuck = std(results_stuck) / sqrt(length(results_stuck))
 
-# QMDP
-results_qmdp = @showprogress "Running QMDP Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_qmdp, up) for _ in 1:numRuns]
-@info "QMDP policy:"
-@show μ_QMDP = mean(results_qmdp)
-@show SEM_QMDP = std(results_qmdp) / sqrt(length(results_qmdp))
+# # QMDP
+# results_qmdp = @showprogress "Running QMDP Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_qmdp, up) for _ in 1:numRuns]
+# @info "QMDP policy:"
+# @show μ_QMDP = mean(results_qmdp)
+# @show SEM_QMDP = std(results_qmdp) / sqrt(length(results_qmdp))
 
-# POMCP
-results_pomcp = @showprogress "Running POMCP Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_pomcp, up) for _ in 1:numRuns]
-@info "POMCP policy:"
-@show μ_POMCP = mean(results_pomcp)
-@show SEM_POMCP = std(results_pomcp) / sqrt(length(results_pomcp))
+# # POMCP
+# results_pomcp = @showprogress "Running POMCP Policy" [simulate(RolloutSimulator(max_steps=maxSteps), wheel_failure_pomdp, π_pomcp, up) for _ in 1:numRuns]
+# @info "POMCP policy:"
+# @show μ_POMCP = mean(results_pomcp)
+# @show SEM_POMCP = std(results_pomcp) / sqrt(length(results_pomcp))
