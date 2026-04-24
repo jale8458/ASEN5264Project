@@ -1,4 +1,5 @@
 #include "jl_lib.h"
+#include <iostream>
 
 std::tuple<ob::PlannerStatus, ob::PathPtr> SSTSolve(const oc::SpaceInformationPtr& si, const ob::ScopedState<ob::SE2StateSpace>& q_init, const ob::GoalPtr &q_goal, const double solveTime) {
     // Uses control problem formulation to plan with RRT in a SE2 state space
@@ -23,6 +24,7 @@ std::tuple<ob::PlannerStatus, ob::PathPtr> SSTSolve(const oc::SpaceInformationPt
 }
 
 std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> PlanWithSST(const std::string obsFile, const std::string endpointsFile, const double angleBias, const double solveTime) {
+    
     // Bounds
     ob::RealVectorBounds se2Bounds = ObsSpace2D::getBoundsGeneric();
     ob::RealVectorBounds cBounds(2);
@@ -41,8 +43,7 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::
 
     // Setup obstacles
     std::vector<Obs2D> obstacles;
-    obstacles = ObsSpace2D::getObstaclesCSV(obsFile);
-
+    obstacles = ObsSpace2D::getObstaclesCSV(obsFile);    
     // Setup SpaceInformation/Collision Checker
     oc::SpaceInformationPtr si = std::make_shared<oc::SpaceInformation>(sSpace, cSpace);
     std::shared_ptr<SimpleUnicycle> propagator = std::make_shared<SimpleUnicycle>(si, angleBias);
@@ -55,6 +56,65 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::
 
     // Start & Goal regions
     auto [start, goal] = ObsSpace2D::getStartGoal(si, endpointsFile);
+    ob::GoalPtr goalRegion = std::make_shared<SE2GoalRegion>(si, goal, 0.5);
+
+    auto [solved, path] = SSTSolve(si, start, goalRegion, solveTime);
+    return ProcessPath(solved, path, si);
+}
+
+
+// Replan at cur state: 
+std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>>
+PlanWithSSTFromState(
+    const std::string obsFile,
+    const std::string endpointsFile,
+    const double startX,
+    const double startY,
+    const double startTheta,
+    const double angleBias,
+    const double solveTime
+) {
+    // Bounds
+    ob::RealVectorBounds se2Bounds = ObsSpace2D::getBoundsGeneric();
+    ob::RealVectorBounds cBounds(2);
+    cBounds.setLow(-3);
+    cBounds.setHigh(3);
+
+    // State space
+    ob::StateSpacePtr se2Space(std::make_shared<ob::SE2StateSpace>());
+    se2Space->as<ob::SE2StateSpace>()->setBounds(se2Bounds);
+    ob::StateSpacePtr sSpace = se2Space;
+
+    // Control space
+    const int cSpaceDim = 2;
+    oc::ControlSpacePtr cSpace(std::make_shared<oc::RealVectorControlSpace>(sSpace, cSpaceDim));
+    cSpace->as<oc::RealVectorControlSpace>()->setBounds(cBounds);
+
+    // Obstacles
+    std::vector<Obs2D> obstacles = ObsSpace2D::getObstaclesCSV(obsFile);
+
+    // SpaceInformation
+    oc::SpaceInformationPtr si = std::make_shared<oc::SpaceInformation>(sSpace, cSpace);
+
+
+    std::shared_ptr<SimpleUnicycle> propagator = std::make_shared<SimpleUnicycle>(si, angleBias);
+
+    si->setStatePropagator(propagator);
+    si->setStateValidityChecker(std::make_shared<PointCollChecker2D>(si, obstacles));
+
+    si->setStateValidityCheckingResolution(0.001);
+    si->setPropagationStepSize(0.1);
+    si->setMinMaxControlDuration(1, 10);
+
+    // Start from current POMDP state
+    ob::ScopedState<ob::SE2StateSpace> start(se2Space);
+    start->setX(startX);
+    start->setY(startY);
+    start->setYaw(startTheta);
+
+    // Goal still comes from endpoints file
+    auto [unusedStart, goal] = ObsSpace2D::getStartGoal(si, endpointsFile);
+
     ob::GoalPtr goalRegion = std::make_shared<SE2GoalRegion>(si, goal, 0.5);
 
     auto [solved, path] = SSTSolve(si, start, goalRegion, solveTime);
@@ -119,8 +179,10 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::
     return std::make_tuple(foundSolution, controls, controlDurations, pathPoints);
 }
 
+
 /* =========== Port PlanWithSST to Julia ========== */
 
 JLCXX_MODULE define_julia_module(jlcxx::Module& mod) {
     mod.method("PlanWithSST", &PlanWithSST);
+    mod.method("PlanWithSSTFromState", &PlanWithSSTFromState);
 }
