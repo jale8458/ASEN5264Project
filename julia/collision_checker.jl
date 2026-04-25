@@ -88,8 +88,3 @@ function reached_goal(x, goal_state; pos_tol=0.5, heading_tol=0.5)
     return pos_err <= pos_tol && heading_err <= heading_tol
 end
 
-# Helper function: wrap heading error to [-pi, pi]
-function wrap_angle(theta)
-    return atan(sin(theta),cos(theta))
-end
-
