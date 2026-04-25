@@ -8,16 +8,16 @@ using ProgressMeter
 include("main_pomdp_helpers.jl")
 using Debugger
 # ----- Custom Runtime setup for Windows -----
-ENV["PYTHONHOME"] = raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312"
-ENV["PYTHONPATH"] = raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312\Lib"
+# ENV["PYTHONHOME"] = raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312"
+# ENV["PYTHONPATH"] = raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312\Lib"
 
-ENV["PATH"] =
-    raw"C:\Users\ckuru\.julia\dev\libcxxwrap_julia_jll\override\bin;" *
-    raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312;" *
-    raw"C:\vcpkg\installed\x64-windows\bin;" *
-    raw"C:\Users\ckuru\ASEN5264\ASEN5264Project\lib;" *
-    Sys.BINDIR * ";" *
-    ENV["PATH"]
+# ENV["PATH"] =
+#     raw"C:\Users\ckuru\.julia\dev\libcxxwrap_julia_jll\override\bin;" *
+#     raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312;" *
+#     raw"C:\vcpkg\installed\x64-windows\bin;" *
+#     raw"C:\Users\ckuru\ASEN5264\ASEN5264Project\lib;" *
+#     Sys.BINDIR * ";" *
+#     ENV["PATH"]
 
 # Load custom ompl planning library into CppOMPL module, if not already loaded
 if !isdefined(Main, :CppOMPL)
@@ -26,7 +26,7 @@ end
 
 # Directories
 # const ENV_DIR = joinpath(@__DIR__, "OMPL/environments")
-const ENV_DIR = raw"C:\Users\ckuru\ASEN5264\ASEN5264Project\OMPL\environments"
+const ENV_DIR = raw"/Users/Jacob/Downloads/School/ASEN 5264/ASEN5264Project/OMPL/environments"
 const obs_file = joinpath(ENV_DIR, "normalParking.csv")
 const endpoints_file = joinpath(ENV_DIR, "normalParkingEndpoints.csv")
 # ----- Constants -----
@@ -37,6 +37,7 @@ const collision_penalty = 100.0
 const goal_reward = 100.0
 const replan_cost = 2.0
 const wheel_radius = 0.5
+const fail_chance = 0.5
 
 # Bounds checking 
 const xmin = 0.0
@@ -327,7 +328,7 @@ main_pomdp = QuickPOMDP(
                         (x_next, :healthy, next_num_fails, next_plan_index, plan_type),
                         (x_next, :turn_bias, next_num_fails, next_plan_index, plan_type)
                     ],
-                    [0.99, 0.01]
+                    [1 - fail_chance, fail_chance]
                 )
             else
                 return Deterministic((x_next, :turn_bias, next_num_fails, next_plan_index, plan_type))
@@ -353,8 +354,7 @@ main_pomdp = QuickPOMDP(
                     return SparseCat([:small_error, :large_error], [0.90, 0.10])
                 end
             end
-            #### else return Deterministic(:large_error)
-        # end
+        end
     end,
 
     reward = function(s, a, sp)
@@ -401,7 +401,6 @@ end
 replan_states = []
 function failure_threshold_policy(mdp, s)
     x, _, num_fails, _, plan_type = s
-    @infiltrate
 
     if num_fails ≥ 2 && plan_type != :failure
         print("Replan triggered at state = $x, num_fails = $num_fails")
@@ -427,7 +426,7 @@ r, actual_path = rollout_with_path(
 
 @show r
 
-plot_plan_with_actual(actual_path)
+display(plot_plan_with_actual(actual_path))
 
 function check_failure_plan_execution()
     println("\n--- Checking failure-aware plan execution ---")
@@ -457,18 +456,18 @@ numRuns = 10
 maxSteps = 100
 
 
-# MC Evaluation
-results_baseline = [
-    begin
-        set_active_plan(:nominal, start_state)
-        simulate(
-            RolloutSimulator(max_steps=maxSteps),
-            mdp,
-            always_continue_policy,
-            rand(initialstate(main_pomdp))
-        )
-    end
-    for _ in 1:numRuns
-]
-@show mean(results_baseline)
-@show std(results_baseline)
+# # MC Evaluation
+# results_baseline = [
+#     begin
+#         set_active_plan(:nominal, start_state)
+#         simulate(
+#             RolloutSimulator(max_steps=maxSteps),
+#             mdp,
+#             always_continue_policy,
+#             rand(initialstate(main_pomdp))
+#         )
+#     end
+#     for _ in 1:numRuns
+# ]
+# @show mean(results_baseline)
+# @show std(results_baseline)
