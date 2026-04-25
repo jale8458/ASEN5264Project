@@ -1,3 +1,11 @@
+# Thresholds struct
+struct thresholds
+    small_pos::Float64
+    small_heading::Float64
+    med_pos::Float64
+    med_heading::Float64
+end
+
 # Helper function: position + wrapped heading error
 function tracking_error(x_actual, x_plan)
     dx = x_actual[1]-x_plan[1]
@@ -11,17 +19,13 @@ function tracking_error(x_actual, x_plan)
 end
 
 # Helper function: decide level of tracking error 
-function tracking_error_level(x_actual, x_plan;
-                              small_pos_thresh=0.25,
-                              med_pos_thresh=0.75,
-                              small_heading_thresh=0.15,
-                              med_heading_thresh=0.45)
+function tracking_error_level(x_actual, x_plan; thresholdStruct::thresholds = thresholds(0.25, pi/30, 0.75, pi/6))
 
     pos_err, heading_err = tracking_error(x_actual, x_plan)
 
-    if pos_err <= small_pos_thresh && heading_err <= small_heading_thresh
+    if pos_err <= thresholdStruct.small_pos && heading_err <= thresholdStruct.small_heading
         return :small_error
-    elseif pos_err <= med_pos_thresh && heading_err <= med_heading_thresh
+    elseif pos_err <= thresholdStruct.med_pos && heading_err <= thresholdStruct.med_heading
         return :medium_error
     else
         return :large_error

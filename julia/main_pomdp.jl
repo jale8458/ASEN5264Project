@@ -1,5 +1,5 @@
 using QuickPOMDPs: QuickPOMDP
-using POMDPTools: Deterministic, Uniform, SparseCat, FunctionPolicy, RolloutSimulator, DiscreteUpdater, UnderlyingMDP
+using POMDPTools # : Deterministic, Uniform, SparseCat, FunctionPolicy, RolloutSimulator, HistoryRecorder, DiscreteUpdater, UnderlyingMDP
 using Statistics: mean, std
 using Plots
 using POMDPs: actions, @gen, isterminal, discount, statetype, actiontype, simulate, states, initialstate
@@ -45,6 +45,12 @@ const replan_cost = 2.0
 const wheel_radius = 0.5
 const fail_chance = 0.01
 
+# Max steps for MC simulations
+const maxSteps = 1000
+
+# Measurement Thresholds
+const measThresholds = thresholds(0.25, pi/30, 0.75, pi/6)
+
 # Bounds checking 
 const xmin = 0.0
 const xmax = 10.0
@@ -62,34 +68,35 @@ obstacles = get_obstacles_csv(obs_file)
 
 main_pomdp = QuickPOMDP(
     # Continuous state stored as:
-    # ((x, y, theta), mode, plan_index, controls, expected_path)
+    # ((x, y, theta), mode, plan_type, plan_index, controls, expected_path)
     # (x, y, theta) are the continuous state space
     # mode = [:healthy, :turn_bias]
+    # plan_type = [:healthy, :turn_bias]
     # plan_index = Int representing index of plan
     # controls = Vector{Vector{Float64}} sequence of controls to goal under current dynamics. Should be applied at interval dt
     # expected_path = Vector{Vector{Float64}} expected path following controls if dynamics stay constant
 
     # For continuous spaces, don't set "state"
-    initialstate = Deterministic((start_state, :healthy, 1, create_plan(:healthy, start_state)...)),
+    initialstate = Deterministic((start_state, :healthy, :healthy, 1, create_plan(:healthy, start_state)...)),
     
     actions = [:continue_plan, :replan_nominal, :replan_failure],
-    observations = [:small_error, :medium_error, :large_error],
+    observations = [(error, plan_type) for error in (:small_error, :medium_error, :large_error) for plan_type in (:healthy, :turn_bias)],
 
     transition = function(s, a)
-        x, mode, plan_index, controls, expected_path = s
+        x, mode, plan_type, plan_index, controls, expected_path = s
 
         # Replan under nominal model
         if a == :replan_nominal
             if tracking # If tracking, record the current plan before replanning
                 push!(pathHistory, expected_path[1:plan_index])
             end
-            return Deterministic((x, mode, 1, create_plan(:healthy, x)...))
+            return Deterministic((x, mode, :healthy, 1, create_plan(:healthy, x)...)) # For nominal trajectory, make plan with healthy wheel dynamics
         # Replan under failure-aware model
         elseif a == :replan_failure
             if tracking # If tracking, record the current plan before replanning
                 push!(pathHistory, expected_path[1:plan_index])
             end
-            return Deterministic((x, mode, 1, create_plan(:turn_bias, x)...))
+            return Deterministic((x, mode, :turn_bias, 1, create_plan(:turn_bias, x)...))
 
         # Continue current plan
         else
@@ -97,7 +104,7 @@ main_pomdp = QuickPOMDP(
 
             # If no control left, stay in place
             if u === nothing
-                return Deterministic((x, mode, plan_index, controls, expected_path))
+                return Deterministic((x, mode, plan_type, plan_index, controls, expected_path))
             end
 
             # Propagate actual state using current control
@@ -107,19 +114,20 @@ main_pomdp = QuickPOMDP(
             next_plan_index = plan_index + 1
 
             # Hidden dynamics: mode probabilistically switches between healthy and biased
+            make_state = mode -> (x_next, mode, plan_type, next_plan_index, controls, expected_path) # Helper to construct state
             if mode == :healthy
                 return SparseCat(
                     [
-                        (x_next, :healthy, next_plan_index, controls, expected_path),
-                        (x_next, :turn_bias, next_plan_index, controls, expected_path)
+                        make_state(:healthy),
+                        make_state(:turn_bias)
                     ],
                     [1 - fail_chance, fail_chance]
                 )
             elseif mode == :turn_bias
                 return SparseCat(
                     [
-                        (x_next, :turn_bias, next_plan_index, controls, expected_path),
-                        (x_next, :healthy, next_plan_index, controls, expected_path)
+                        make_state(:turn_bias),
+                        make_state(:healthy)
                     ],
                     [1 - fail_chance, fail_chance]
                 )
@@ -130,39 +138,43 @@ main_pomdp = QuickPOMDP(
     end,
 
     observation = function(a, sp)
+        # Extract state
+        x, mode, plan_type, plan_index, controls, expected_path = sp
+
+        # Helper to construct observation. plan_type is deterministically observed
+        obs = error -> (error, plan_type)
+
         # If action was not to continue, error is small by definition
         if a != :continue_plan
-            return Deterministic(:small_error)
+            return Deterministic(obs(:small_error))
         end
 
-        # Extract state
-        x, mode, plan_index, controls, expected_path = sp
         # If reached goal or in collision, observation doesn't matter
         if in_collision(x, obstacles) || reached_goal(x, goal_state)
-            return Deterministic(:small_error)
+            return Deterministic(obs(:small_error))
         else
             x_plan = get_planned_state(expected_path, plan_index)
             if x_plan === nothing
-                return Deterministic(:large_error)
+                return Deterministic(obs(:large_error))
             end
 
             z_true = tracking_error_level(x, x_plan)
 
             if z_true == :small_error
                 return SparseCat(
-                    [:small_error, :medium_error, :large_error],
+                    [obs(:small_error), obs(:medium_error), obs(:large_error)],
                     [0.85, 0.10, 0.05]
                 )
 
             elseif z_true == :medium_error
                 return SparseCat(
-                    [:small_error, :medium_error, :large_error],
+                    [obs(:small_error), obs(:medium_error), obs(:large_error)],
                     [0.10, 0.80, 0.10]
                 )
 
             else
                 return SparseCat(
-                    [:small_error, :medium_error, :large_error],
+                    [obs(:small_error), obs(:medium_error), obs(:large_error)],
                     [0.05, 0.10, 0.85]
                 )
             end
@@ -170,7 +182,7 @@ main_pomdp = QuickPOMDP(
     end,
 
     reward = function(s, a, sp)
-        x, mode, plan_index, controls, expected_path = sp
+        x, mode, plan_type, plan_index, controls, expected_path = sp
 
         if in_collision(x, obstacles)
             if tracking # If tracking, record the current plan before terminating
@@ -201,27 +213,20 @@ main_pomdp = QuickPOMDP(
             else
                 plan_penalty = replan_cost
             end
-
+            
             return -tracking_penalty - plan_penalty
         end
     end,
     
-    discount = 0.99,
+    discount = 1.00,
     isterminal = s -> in_collision(s[1], obstacles) || reached_goal(s[1], goal_state)
 )
 
 # Do a test with the always continue policy
-# Right now I have the vectors populated before calling the POMDP.
-# Should the POMDP call the initial planner?
 
-r, actual_path = rollout_with_path(
-    main_pomdp,
-    always_continue,
-    rand(initialstate(main_pomdp)),
-    1000
-)
+# Plot a single run of π_continue policy, which is the baseline
+history = simulate(HistoryRecorder(max_steps=maxSteps), main_pomdp, π_continue) # history is a SimHistory object
 
-@show r
+display(plot_plan_with_actual(pathHistory, first.(state_hist(history))))
 
-display(plot_plan_with_actual(pathHistory, actual_path))
-
+@show collect(observation_hist(history))[end-10:end]

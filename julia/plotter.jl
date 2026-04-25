@@ -47,24 +47,6 @@ function plot_plans!(p, pathHistory; title_str="SST Plans")
     return p
 end
 
-function rollout_with_path(mdp, policy, s, max_steps=100)
-    path = [s[1]]
-    t = 0
-    r_total = 0.0
-
-    while !isterminal(mdp, s) && t < max_steps
-        a = policy(mdp, s)
-        s, r = @gen(:sp, :r)(mdp, s, a)
-
-        push!(path, s[1])
-
-        r_total += discount(mdp)^t * r
-        t += 1
-    end
-
-    return r_total, path
-end
-
 function plot_plan_with_actual(pathHistory, actual_path)
 
     xs_actual = [p[1] for p in actual_path]
