@@ -8,16 +8,16 @@ using ProgressMeter
 include("main_pomdp_helpers.jl")
 using Debugger
 # ----- Custom Runtime setup for Windows -----
-ENV["PYTHONHOME"] = raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312"
-ENV["PYTHONPATH"] = raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312\Lib"
+# ENV["PYTHONHOME"] = raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312"
+# ENV["PYTHONPATH"] = raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312\Lib"
 
-ENV["PATH"] =
-    raw"C:\Users\ckuru\.julia\dev\libcxxwrap_julia_jll\override\bin;" *
-    raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312;" *
-    raw"C:\vcpkg\installed\x64-windows\bin;" *
-    raw"C:\Users\ckuru\ASEN5264\ASEN5264Project\lib;" *
-    Sys.BINDIR * ";" *
-    ENV["PATH"]
+# ENV["PATH"] =
+#     raw"C:\Users\ckuru\.julia\dev\libcxxwrap_julia_jll\override\bin;" *
+#     raw"C:\Users\ckuru\AppData\Local\Programs\Python\Python312;" *
+#     raw"C:\vcpkg\installed\x64-windows\bin;" *
+#     raw"C:\Users\ckuru\ASEN5264\ASEN5264Project\lib;" *
+#     Sys.BINDIR * ";" *
+#     ENV["PATH"]
 
 # Load custom ompl planning library into CppOMPL module, if not already loaded
 if !isdefined(Main, :CppOMPL)
@@ -27,8 +27,8 @@ end
 # Directories
 # const ENV_DIR = joinpath(@__DIR__, "OMPL/environments")
 const ENV_DIR = raw"C:\Users\ckuru\ASEN5264\ASEN5264Project\OMPL\environments"
-const obs_file = joinpath(ENV_DIR, "normalParking.csv")
-const endpoints_file = joinpath(ENV_DIR, "normalParkingEndpoints.csv")
+const obs_file = joinpath(ENV_DIR, "test.csv")
+const endpoints_file = joinpath(ENV_DIR, "test_ends.csv")
 # ----- Constants -----
 const max_fails = 5
 const dt = 0.1
@@ -58,8 +58,8 @@ function set_active_plan(plan_type, x)
     end
 
     SSTResult, control, controlDurations, path = Main.CppOMPL.PlanWithSSTFromState(
-        "normalParking.csv",
-        "normalParkingEndpoints.csv",
+        "test.csv",
+        "test_ends.csv",
         x[1], x[2], x[3], 
         angle_bias,
         5.0
@@ -158,12 +158,23 @@ function tracking_error(x_actual, x_plan)
     return pos_err, heading_err
 end
 
-# Helper function: decide if tracking error is large
-function large_tracking_error(x_actual, x_plan; pos_thresh=0.5, heading_thresh=0.35)
-    pos_err, heading_err = tracking_error(x_actual, x_plan)
-    return pos_err > pos_thresh || heading_err > heading_thresh
-end
+# Helper function: decide level of tracking error 
+function tracking_error_level(x_actual, x_plan;
+                              small_pos_thresh=0.25,
+                              med_pos_thresh=0.75,
+                              small_heading_thresh=0.15,
+                              med_heading_thresh=0.45)
 
+    pos_err, heading_err = tracking_error(x_actual, x_plan)
+
+    if pos_err <= small_pos_thresh && heading_err <= small_heading_thresh
+        return :small_error
+    elseif pos_err <= med_pos_thresh && heading_err <= med_heading_thresh
+        return :medium_error
+    else
+        return :large_error
+    end
+end
 ############
 # Plotting helpers
 ############
@@ -273,22 +284,22 @@ plot_original_plan()
 main_pomdp = QuickPOMDP(
 
     # Continuous state stored as:
-    # ((x, y, theta), mode, num_fails, plan_index, plan_type)
-    states = [(start_state, :healthy, 0, 1, :nominal)],
+    # ((x, y, theta), mode, plan_index, plan_type)
+    states = [(start_state, :healthy, 1, :nominal)],
     actions = [:continue_plan, :replan_nominal, :replan_failure],
-    observations = [:small_error, :large_error, :collision_obs, :goal_obs],
+    observations = [:small_error, :medium_error, :large_error, :collision_obs, :goal_obs],
 
     transition = function(s, a)
-        x, mode, num_fails, plan_index, plan_type = s
+        x, mode, plan_index, plan_type = s
 
         # Replan under nominal model
         if a == :replan_nominal
             set_active_plan(:nominal, x)
-            return Deterministic((x, mode, 0, 1, :nominal))
+            return Deterministic((x, mode, 1, :nominal))
         # Replan under failure-aware model
         elseif a == :replan_failure
             set_active_plan(:failure, x)
-            return Deterministic((x, mode, 0, 1, :failure))
+            return Deterministic((x, mode, 1, :failure))
 
         # Continue current plan
         else
@@ -296,48 +307,42 @@ main_pomdp = QuickPOMDP(
             # ----- placeholder for what to do if no more controls to execute: 
             duration = get_control_duration(plan_index)
 
-            # If no control left, stay in place and accumulate failure count
+            # If no control left, stay in place
             if u === nothing ||  duration === nothing
-                return Deterministic((x, mode, min(num_fails + 1, max_fails), plan_index, plan_type))
+                return Deterministic((x, mode, plan_index, plan_type))
             end
 
             # Propagate actual state using current control
             x_next = propagate_unicycle(x, u, mode, duration)
-            # Compare against planned next state
-            x_plan_next = get_planned_state(plan_index + 1)
 
             # ----- placeholder for what to do if no more states left: 
-            if x_plan_next === nothing
-                next_num_fails = min(num_fails + 1, max_fails)
-            else
-                if large_tracking_error(x_next, x_plan_next)
-                    next_num_fails = min(num_fails + 1, max_fails)
-                else
-                    next_num_fails = 0
-                end
-            end
             
             # increment plan index 
             next_plan_index = plan_index + 1
 
-            # Hidden mode dynamics: healthy can fail, failed stays failed
+            # Hidden dynamics: mode probabilistically switches between healthy and biased
             if mode == :healthy
                 return SparseCat(
                     [
-                        (x_next, :healthy, next_num_fails, next_plan_index, plan_type),
-                        (x_next, :turn_bias, next_num_fails, next_plan_index, plan_type)
+                        (x_next, :healthy, next_plan_index, plan_type),
+                        (x_next, :turn_bias, next_plan_index, plan_type)
                     ],
                     [0.99, 0.01]
                 )
             else
-                return Deterministic((x_next, :turn_bias, next_num_fails, next_plan_index, plan_type))
+                return SparseCat(
+                    [
+                        (x_next, :turn_bias, next_plan_index, plan_type),
+                        (x_next, :healthy, next_plan_index, plan_type)
+                    ],
+                    [0.99, 0.01]
+                )
             end
         end
     end,
 
     observation = function(a, sp)
-        # placeholder for observations
-        x, mode, num_fails, plan_index, plan_type = sp
+        x, mode, plan_index, plan_type = sp
         if in_collision(x, obstacles)
             return Deterministic(:collision_obs)
         elseif reached_goal(x,goal_state)
@@ -346,72 +351,72 @@ main_pomdp = QuickPOMDP(
             x_plan = get_planned_state(plan_index)
             if x_plan === nothing
                 return Deterministic(:large_error)
+            end
+
+            z_true = tracking_error_level(x, x_plan)
+
+            if z_true == :small_error
+                return SparseCat(
+                    [:small_error, :medium_error, :large_error],
+                    [0.85, 0.10, 0.05]
+                )
+
+            elseif z_true == :medium_error
+                return SparseCat(
+                    [:small_error, :medium_error, :large_error],
+                    [0.10, 0.80, 0.10]
+                )
+
             else
-                if large_tracking_error(x, x_plan)
-                    return SparseCat([:large_error, :small_error], [0.90, 0.10])
-                else
-                    return SparseCat([:small_error, :large_error], [0.90, 0.10])
-                end
+                return SparseCat(
+                    [:small_error, :medium_error, :large_error],
+                    [0.05, 0.10, 0.85]
+                )
             end
         end
     end,
 
     reward = function(s, a, sp)
-        x, mode, num_fails, plan_index, plan_type = sp
-        x_prev, _, _, _, _ = s
+        x, mode, plan_index, plan_type = sp
 
         if in_collision(x, obstacles)
             return -collision_penalty
+
         elseif reached_goal(x, goal_state)
             return goal_reward
+
         else
-            pos_err_prev, heading_err_prev = tracking_error(x_prev, goal_state)
-            pos_err_next, heading_err_next = tracking_error(x, goal_state)
+            # tracking error relative to current planned state
+            x_plan = get_planned_state(plan_index)
 
-            # Reward progress toward goal?
-            progress_reward = (pos_err_prev - pos_err_next) + 0.5 * (heading_err_prev - heading_err_next)
+            if x_plan === nothing
+                tracking_penalty = 10.0
+            else
+                pos_err, heading_err = tracking_error(x, x_plan)
+                tracking_penalty = pos_err + 0.5 * heading_err
+            end
 
-            # Penalize replanning
+            # penalize replanning
             if a == :continue_plan
                 plan_penalty = 0.0
             else
                 plan_penalty = replan_cost
             end
 
-            # Penalize repeated failures
-            fail_penalty = num_fails
-
-            return progress_reward - plan_penalty - fail_penalty
+            return -tracking_penalty - plan_penalty
         end
     end,
 
-    initialstate = Deterministic((start_state, :healthy, 0, 1, :nominal)),
+    initialstate = Deterministic((start_state, :healthy, 1, :nominal)),
     discount = 0.95,
     isterminal = s -> in_collision(s[1], obstacles) || reached_goal(s[1], goal_state)
 )
 
 
-# SOlution
+# Naive Solutions
 function always_continue(mdp, s)
     return :continue_plan
 end
-
-# up = DiscreteUpdater(main_pomdp)
-replan_states = []
-function failure_threshold_policy(mdp, s)
-    x, _, num_fails, _, plan_type = s
-    @infiltrate
-
-    if num_fails ≥ 2 && plan_type != :failure
-        print("Replan triggered at state = $x, num_fails = $num_fails")
-        push!(replan_states, x)
-        return :replan_failure
-        
-    else
-        return :continue_plan
-    end
-end
-
 
 always_continue_policy = FunctionPolicy(s -> :continue_plan)
 
@@ -419,7 +424,7 @@ set_active_plan(:nominal, start_state)
 
 r, actual_path = rollout_with_path(
     main_pomdp,
-    failure_threshold_policy,
+    always_continue,
     rand(initialstate(main_pomdp)),
     100
 )
@@ -428,46 +433,3 @@ r, actual_path = rollout_with_path(
 
 plot_plan_with_actual(actual_path)
 
-function check_failure_plan_execution()
-    println("\n--- Checking failure-aware plan execution ---")
-
-    # Start from a forced failure state
-    x0 = start_state
-    set_active_plan(:failure, x0)
-
-    u = get_planned_control(1)
-    duration = get_control_duration(1)
-    x_plan_next = Tuple(get_planned_state(2))
-
-    x_prop_failed = propagate_unicycle(x0, u, :turn_bias, duration)
-
-    @show u
-    @show duration
-    @show x_prop_failed
-    @show x_plan_next
-    @show tracking_error(x_prop_failed, x_plan_next)
-
-    @assert !large_tracking_error(x_prop_failed, x_plan_next) "Failure-aware plan does not match failed dynamics"
-
-    println("Failure-aware propagator matches failure-aware plan.")
-end
-
-numRuns = 10
-maxSteps = 100
-
-
-# MC Evaluation
-results_baseline = [
-    begin
-        set_active_plan(:nominal, start_state)
-        simulate(
-            RolloutSimulator(max_steps=maxSteps),
-            mdp,
-            always_continue_policy,
-            rand(initialstate(main_pomdp))
-        )
-    end
-    for _ in 1:numRuns
-]
-@show mean(results_baseline)
-@show std(results_baseline)
