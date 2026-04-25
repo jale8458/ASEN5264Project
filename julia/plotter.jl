@@ -20,7 +20,7 @@ function plot_obstacles!(plot, obstacles)
     end
 end
 
-function plot_plans!(p; title_str="SST Plans")
+function plot_plans!(p, pathHistory; title_str="SST Plans")
     # p is a plot object
     for (i, path) in enumerate(pathHistory)
         xs, ys = path_matrix_from_path(path)
@@ -65,13 +65,13 @@ function rollout_with_path(mdp, policy, s, max_steps=100)
     return r_total, path
 end
 
-function plot_plan_with_actual(actual_path)
+function plot_plan_with_actual(pathHistory, actual_path)
 
     xs_actual = [p[1] for p in actual_path]
     ys_actual = [p[2] for p in actual_path]
 
     pathPlot = plot()
-    plot_plans!(pathPlot)
+    plot_plans!(pathPlot, pathHistory)
 
     plot!(pathPlot,
         xs_actual, ys_actual,

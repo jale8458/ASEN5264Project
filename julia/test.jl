@@ -2,8 +2,7 @@
 if !isdefined(Main, :CppOMPL)
     include(joinpath(@__DIR__, "loadCppModule.jl"))
 end
-(SSTResult, control, controlDurations, path) = CppOMPL.PlanWithSST("normalParking.csv", "normalParkingEndpoints.csv", 0.5, 5.0)
-display(SSTResult)
+(control, controlDurations, path) = CppOMPL.PlanWithSST("normalParking.csv", "normalParkingEndpoints.csv", 0.5, 5.0)
 display(control)
 display(controlDurations)
 display(path)

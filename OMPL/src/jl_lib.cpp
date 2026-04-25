@@ -23,7 +23,7 @@ std::tuple<ob::PlannerStatus, ob::PathPtr> SSTSolve(const oc::SpaceInformationPt
     return std::make_tuple(solved, pdef->getSolutionPath());
 }
 
-std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> PlanWithSST(const std::string obsFile, const std::string endpointsFile, const double angleBias, const double solveTime) {
+std::tuple<jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> PlanWithSST(const std::string obsFile, const std::string endpointsFile, const double angleBias, const double solveTime) {
     
     // Bounds
     ob::RealVectorBounds se2Bounds = ObsSpace2D::getBoundsGeneric();
@@ -58,13 +58,18 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::
     auto [start, goal] = ObsSpace2D::getStartGoal(si, endpointsFile);
     ob::GoalPtr goalRegion = std::make_shared<SE2GoalRegion>(si, goal, 0.5);
 
-    auto [solved, path] = SSTSolve(si, start, goalRegion, solveTime);
-    return ProcessPath(solved, path, si);
+    // Run SST until exact solution found
+    ob::PlannerStatus solved = ob::PlannerStatus::UNKNOWN;
+    ob::PathPtr path;
+    while (solved != ob::PlannerStatus::EXACT_SOLUTION) {
+        std::tie(solved, path) = SSTSolve(si, start, goalRegion, solveTime);
+    }
+    return ProcessPath(path, si);
 }
 
 
 // Replan at cur state: 
-std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>>
+std::tuple<jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>>
 PlanWithSSTFromState(
     const std::string obsFile,
     const std::string endpointsFile,
@@ -117,11 +122,16 @@ PlanWithSSTFromState(
 
     ob::GoalPtr goalRegion = std::make_shared<SE2GoalRegion>(si, goal, 0.5);
 
-    auto [solved, path] = SSTSolve(si, start, goalRegion, solveTime);
-    return ProcessPath(solved, path, si);
+    // Run SST until exact solution found
+    ob::PlannerStatus solved = ob::PlannerStatus::UNKNOWN;
+    ob::PathPtr path;
+    while (solved != ob::PlannerStatus::EXACT_SOLUTION) {
+        std::tie(solved, path) = SSTSolve(si, start, goalRegion, solveTime);
+    }
+    return ProcessPath(path, si);
 }
 
-std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> ProcessPath(const ob::PlannerStatus& solved, const ob::PathPtr& path, const oc::SpaceInformationPtr& si) {
+std::tuple<jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::ArrayRef<double, 2>> ProcessPath(const ob::PathPtr& path, const oc::SpaceInformationPtr& si) {
     /// Solution processing -> Boolean & Julia matrices
     oc::PathControl* pathControl = path->as<oc::PathControl>();
 
@@ -129,21 +139,6 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::
     size_t n_controls = pathControl->getControlCount();
     size_t ctrl_dim = si->getControlSpace()->as<oc::RealVectorControlSpace>()->getDimension();
     size_t state_dim = si->getStateDimension();
-
-    // Solution Status
-    bool foundSolution;
-    if (solved == ob::PlannerStatus::EXACT_SOLUTION)
-    {
-        std::cout<<"Exact solution found.\n";
-        foundSolution = true;
-    }
-    else if (solved == ob::PlannerStatus::APPROXIMATE_SOLUTION) {
-        std::cout<<"Solution not found. Returning nearest path.\n";
-        foundSolution = false;
-    }
-    else {
-        throw std::runtime_error("Unknown Solution Status.");
-    }
 
     // Allocate control and geometric return matrices. These are 3xN
     jl_value_t* array_type = jl_apply_array_type((jl_value_t*)jl_float64_type, 2);
@@ -176,7 +171,7 @@ std::tuple<bool, jlcxx::ArrayRef<double, 2>, jlcxx::ArrayRef<double, 1>, jlcxx::
         pathPoints[2+i*3] = wrappedYaw;
     }
 
-    return std::make_tuple(foundSolution, controls, controlDurations, pathPoints);
+    return std::make_tuple(controls, controlDurations, pathPoints);
 }
 
 

@@ -43,7 +43,7 @@ const collision_penalty = 100.0
 const goal_reward = 100.0
 const replan_cost = 2.0
 const wheel_radius = 0.5
-const fail_chance = 0.00
+const fail_chance = 0.01
 
 # Bounds checking 
 const xmin = 0.0
@@ -223,5 +223,5 @@ r, actual_path = rollout_with_path(
 
 @show r
 
-display(plot_plan_with_actual(actual_path))
+display(plot_plan_with_actual(pathHistory, actual_path))
 

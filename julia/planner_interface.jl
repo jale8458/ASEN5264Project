@@ -9,7 +9,7 @@ function create_plan(mode, x)
         error("Unknown planning mode in set_active_plan call")
     end
 
-    SSTResult, control, controlDurations, path = Main.CppOMPL.PlanWithSSTFromState(
+    control, controlDurations, path = Main.CppOMPL.PlanWithSSTFromState(
         "test.csv",
         "test_ends.csv",
         x[1], x[2], x[3], 
