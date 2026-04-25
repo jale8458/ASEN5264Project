@@ -1,16 +1,12 @@
-# ----- Propagation Step Time (Constant) -----
-const dt = 0.1
 
-# ----- Current active plan returned by planner -----
-current_path = Vector{Vector{Float64}}()
-current_controls = Vector{Vector{Float64}}()
-
-# Helper function: set active plan
-function set_active_plan(plan_type, x)
-    if plan_type == :nominal
+# Helper function: Create an active plan
+function create_plan(mode, x)
+    if mode == :healthy
         angle_bias = 0.0
-    else
+    elseif mode == :turn_bias
         angle_bias = turn_bias
+    else
+        error("Unknown planning mode in set_active_plan call")
     end
 
     SSTResult, control, controlDurations, path = Main.CppOMPL.PlanWithSSTFromState(
@@ -24,14 +20,20 @@ function set_active_plan(plan_type, x)
     # Number of timesteps to execute each control
     nTimesteps = round.(Int,controlDurations/dt)
 
-    global current_controls = [control[:, i] for i in 1:size(control, 2) for _ in 1:nTimesteps[i]]
-    global current_path = [path[:, i] for i in 1:size(path, 2)]
+    # Split all controls into dt = 0.1 timesteps
+    current_controls = [control[:, i] for i in 1:size(control, 2) for _ in 1:nTimesteps[i]]
+    # Repropagate dynamics at resolution dt = 0.1
+    current_path = [collect(x)]
+    for ctrl in current_controls
+        push!(current_path, collect(propagate_unicycle(current_path[end], ctrl, mode, dt)))
+    end
 
+    return current_controls, current_path
 end
 
 # ----- Need helper functions to get planned state at next index -----
 # Helper function: get planned state at index k
-function get_planned_state(k)
+function get_planned_state(current_path, k)
     if 1 <= k <= length(current_path)
         return current_path[k]
     else
@@ -40,7 +42,7 @@ function get_planned_state(k)
 end
 
 # Helper function: get planned control at index k
-function get_planned_control(k)
+function get_planned_control(current_controls, k)
     if 1 <= k <= length(current_controls)
         return current_controls[k]
     else

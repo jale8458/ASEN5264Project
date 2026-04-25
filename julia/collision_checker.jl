@@ -83,7 +83,7 @@ function load_start_goal(filename)
     return start, goal
 end
 
-function reached_goal(x, goal_state; pos_tol=0.5, heading_tol=0.5)
+function reached_goal(x, goal_state; pos_tol=0.5, heading_tol=pi/12.0)
     pos_err, heading_err = tracking_error(x, goal_state)
     return pos_err <= pos_tol && heading_err <= heading_tol
 end

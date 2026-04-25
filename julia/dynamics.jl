@@ -6,8 +6,10 @@ function unicycle_dynamics(x,u,mode)
 
     if mode == :healthy
         omega_eff = omega
-    else
+    elseif mode == :turn_bias
         omega_eff = omega + turn_bias
+    else
+        error("Unknown bias mode in dynamics")
     end
 
     return (

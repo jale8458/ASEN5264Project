@@ -2,14 +2,13 @@ using QuickPOMDPs: QuickPOMDP
 using POMDPTools: Deterministic, Uniform, SparseCat, FunctionPolicy, RolloutSimulator, DiscreteUpdater, UnderlyingMDP
 using Statistics: mean, std
 using Plots
-import POMDPs
 using POMDPs: actions, @gen, isterminal, discount, statetype, actiontype, simulate, states, initialstate
 using ProgressMeter
 
 # Custom Imports
+include("dynamics.jl")
 include("collision_checker.jl")
 include("planner_interface.jl")
-include("dynamics.jl")
 include("error_tracking.jl")
 include("policies.jl")
 include("plotter.jl")
@@ -44,7 +43,7 @@ const collision_penalty = 100.0
 const goal_reward = 100.0
 const replan_cost = 2.0
 const wheel_radius = 0.5
-const fail_chance = 0.01
+const fail_chance = 0.00
 
 # Bounds checking 
 const xmin = 0.0
@@ -52,48 +51,57 @@ const xmax = 10.0
 const ymin = 0.0
 const ymax = 10.0
 
+# -------------- Plan History ---------------
+# Keep track of previous plans for Plotting
+const tracking = true # If true, will track path plan history in pathHistory
+const pathHistory = Vector{Vector{Vector{Float64}}}()
+
 # -------------- Initialize the problem ---------------
 start_state, goal_state = load_start_goal(endpoints_file)
 obstacles = get_obstacles_csv(obs_file)
 
-# Do a test with just the nominal SST plan 
-set_active_plan(:nominal, start_state)
-plot_original_plan()
-
 main_pomdp = QuickPOMDP(
     # Continuous state stored as:
-    # ((x, y, theta), mode, plan_index, plan_type)
+    # ((x, y, theta), mode, plan_index, controls, expected_path)
+    # (x, y, theta) are the continuous state space
+    # mode = [:healthy, :turn_bias]
+    # plan_index = Int representing index of plan
+    # controls = Vector{Vector{Float64}} sequence of controls to goal under current dynamics. Should be applied at interval dt
+    # expected_path = Vector{Vector{Float64}} expected path following controls if dynamics stay constant
+
     # For continuous spaces, don't set "state"
-    initialstate = Deterministic((start_state, :healthy, 1, :nominal)),
+    initialstate = Deterministic((start_state, :healthy, 1, create_plan(:healthy, start_state)...)),
     
     actions = [:continue_plan, :replan_nominal, :replan_failure],
-    observations = [:small_error, :medium_error, :large_error, :collision_obs, :goal_obs],
+    observations = [:small_error, :medium_error, :large_error],
 
     transition = function(s, a)
-        x, mode, plan_index, plan_type = s
+        x, mode, plan_index, controls, expected_path = s
 
         # Replan under nominal model
         if a == :replan_nominal
-            set_active_plan(:nominal, x)
-            return Deterministic((x, mode, 1, :nominal))
+            if tracking # If tracking, record the current plan before replanning
+                push!(pathHistory, expected_path[1:plan_index])
+            end
+            return Deterministic((x, mode, 1, create_plan(:healthy, x)...))
         # Replan under failure-aware model
         elseif a == :replan_failure
-            set_active_plan(:failure, x)
-            return Deterministic((x, mode, 1, :failure))
+            if tracking # If tracking, record the current plan before replanning
+                push!(pathHistory, expected_path[1:plan_index])
+            end
+            return Deterministic((x, mode, 1, create_plan(:turn_bias, x)...))
 
         # Continue current plan
         else
-            u = get_planned_control(plan_index)
+            u = get_planned_control(controls, plan_index)
 
             # If no control left, stay in place
             if u === nothing
-                return Deterministic((x, mode, plan_index, plan_type))
+                return Deterministic((x, mode, plan_index, controls, expected_path))
             end
 
             # Propagate actual state using current control
             x_next = propagate_unicycle(x, u, mode, dt)
-
-            # ----- placeholder for what to do if no more states left: 
             
             # increment plan index 
             next_plan_index = plan_index + 1
@@ -102,31 +110,38 @@ main_pomdp = QuickPOMDP(
             if mode == :healthy
                 return SparseCat(
                     [
-                        (x_next, :healthy, next_plan_index, plan_type),
-                        (x_next, :turn_bias, next_plan_index, plan_type)
+                        (x_next, :healthy, next_plan_index, controls, expected_path),
+                        (x_next, :turn_bias, next_plan_index, controls, expected_path)
+                    ],
+                    [1 - fail_chance, fail_chance]
+                )
+            elseif mode == :turn_bias
+                return SparseCat(
+                    [
+                        (x_next, :turn_bias, next_plan_index, controls, expected_path),
+                        (x_next, :healthy, next_plan_index, controls, expected_path)
                     ],
                     [1 - fail_chance, fail_chance]
                 )
             else
-                return SparseCat(
-                    [
-                        (x_next, :turn_bias, next_plan_index, plan_type),
-                        (x_next, :healthy, next_plan_index, plan_type)
-                    ],
-                    [0.99, 0.01]
-                )
+                error("Unknown mode in state")
             end
         end
     end,
 
     observation = function(a, sp)
-        x, mode, plan_index, plan_type = sp
-        if in_collision(x, obstacles)
-            return Deterministic(:collision_obs)
-        elseif reached_goal(x,goal_state)
-            return Deterministic(:goal_obs)
+        # If action was not to continue, error is small by definition
+        if a != :continue_plan
+            return Deterministic(:small_error)
+        end
+
+        # Extract state
+        x, mode, plan_index, controls, expected_path = sp
+        # If reached goal or in collision, observation doesn't matter
+        if in_collision(x, obstacles) || reached_goal(x, goal_state)
+            return Deterministic(:small_error)
         else
-            x_plan = get_planned_state(plan_index)
+            x_plan = get_planned_state(expected_path, plan_index)
             if x_plan === nothing
                 return Deterministic(:large_error)
             end
@@ -155,24 +170,30 @@ main_pomdp = QuickPOMDP(
     end,
 
     reward = function(s, a, sp)
-        x, mode, plan_index, plan_type = sp
+        x, mode, plan_index, controls, expected_path = sp
 
         if in_collision(x, obstacles)
+            if tracking # If tracking, record the current plan before terminating
+                push!(pathHistory, expected_path)
+            end
             return -collision_penalty
 
         elseif reached_goal(x, goal_state)
+            if tracking # If tracking, record the current plan before terminating
+                push!(pathHistory, expected_path)
+            end
             return goal_reward
 
         else
             # tracking error relative to current planned state
-            x_plan = get_planned_state(plan_index)
+            x_plan = get_planned_state(expected_path, plan_index)
 
             if x_plan === nothing
-                tracking_penalty = 10.0
+                pos_err, heading_err = tracking_error(x, expected_path[end])
             else
                 pos_err, heading_err = tracking_error(x, x_plan)
-                tracking_penalty = pos_err + 0.5 * heading_err
             end
+            tracking_penalty = pos_err + 0.5 * heading_err # NOTE: We should rethink this
 
             # penalize replanning
             if a == :continue_plan
@@ -185,20 +206,19 @@ main_pomdp = QuickPOMDP(
         end
     end,
     
-    discount = 0.95,
+    discount = 0.99,
     isterminal = s -> in_collision(s[1], obstacles) || reached_goal(s[1], goal_state)
 )
 
 # Do a test with the always continue policy
 # Right now I have the vectors populated before calling the POMDP.
 # Should the POMDP call the initial planner?
-set_active_plan(:nominal, start_state)
 
 r, actual_path = rollout_with_path(
     main_pomdp,
     always_continue,
     rand(initialstate(main_pomdp)),
-    100
+    1000
 )
 
 @show r
