@@ -1,7 +1,9 @@
+# ----- Propagation Step Time (Constant) -----
+const dt = 0.1
+
 # ----- Current active plan returned by planner -----
 current_path = Vector{Vector{Float64}}()
 current_controls = Vector{Vector{Float64}}()
-current_control_durations = Float64[]
 
 # Helper function: set active plan
 function set_active_plan(plan_type, x)
@@ -18,8 +20,11 @@ function set_active_plan(plan_type, x)
         angle_bias,
         5.0
     )
-    global current_controls = [control[:, i] for i in 1:size(control, 2)]
-    global current_control_durations = collect(controlDurations)
+
+    # Number of timesteps to execute each control
+    nTimesteps = round.(Int,controlDurations/dt)
+
+    global current_controls = [control[:, i] for i in 1:size(control, 2) for _ in 1:nTimesteps[i]]
     global current_path = [path[:, i] for i in 1:size(path, 2)]
 
 end
@@ -38,14 +43,6 @@ end
 function get_planned_control(k)
     if 1 <= k <= length(current_controls)
         return current_controls[k]
-    else
-        return nothing
-    end
-end
-
-function get_control_duration(k)
-    if 1 <= k <= length(current_control_durations)
-        return current_control_durations[k]
     else
         return nothing
     end
