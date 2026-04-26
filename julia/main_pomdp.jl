@@ -2,8 +2,10 @@ using QuickPOMDPs: QuickPOMDP
 using POMDPTools # : Deterministic, Uniform, SparseCat, FunctionPolicy, RolloutSimulator, HistoryRecorder, DiscreteUpdater, UnderlyingMDP
 using Statistics: mean, std
 using Plots
-using POMDPs: actions, @gen, isterminal, discount, statetype, actiontype, simulate, states, initialstate
+using POMDPs # : actions, @gen, isterminal, discount, statetype, actiontype, simulate, states, initialstate
 using ProgressMeter
+# Solvers
+using QMDP: QMDPSolver
 
 # Custom Imports
 include("dynamics.jl")
@@ -51,6 +53,9 @@ const maxSteps = 1000
 # Measurement Thresholds
 const measThresholds = thresholds(0.25, pi/30, 0.75, pi/6)
 
+# Tracking penalty function
+tracking_penalty_func = (pos_err, heading_err) -> pos_err + 0.5 * heading_err # NOTE: We should rethink this
+
 # Bounds checking 
 const xmin = 0.0
 const xmax = 10.0
@@ -77,6 +82,7 @@ main_pomdp = QuickPOMDP(
     # expected_path = Vector{Vector{Float64}} expected path following controls if dynamics stay constant
 
     # For continuous spaces, don't set "state"
+    ############# NOTE: NEED TO FIX SO THIS CALLS IT EVERY TIME AND NOT JUST ONCE AT THE BEGINNING
     initialstate = Deterministic((start_state, :healthy, :healthy, 1, create_plan(:healthy, start_state)...)),
     
     actions = [:continue_plan, :replan_nominal, :replan_failure],
@@ -144,8 +150,8 @@ main_pomdp = QuickPOMDP(
         # Helper to construct observation. plan_type is deterministically observed
         obs = error -> (error, plan_type)
 
-        # If action was not to continue, error is small by definition
-        if a != :continue_plan
+        # If action was to replan, error is small by definition
+        if a == :replan_nominal || a == :replan_failure
             return Deterministic(obs(:small_error))
         end
 
@@ -184,49 +190,66 @@ main_pomdp = QuickPOMDP(
     reward = function(s, a, sp)
         x, mode, plan_type, plan_index, controls, expected_path = sp
 
+        # If collision, penalize for a collision
         if in_collision(x, obstacles)
             if tracking # If tracking, record the current plan before terminating
                 push!(pathHistory, expected_path)
             end
             return -collision_penalty
 
+        # If goal is reached, give the reward for reaching goal
         elseif reached_goal(x, goal_state)
             if tracking # If tracking, record the current plan before terminating
                 push!(pathHistory, expected_path)
             end
             return goal_reward
 
-        else
-            # tracking error relative to current planned state
-            x_plan = get_planned_state(expected_path, plan_index)
-
-            if x_plan === nothing
-                pos_err, heading_err = tracking_error(x, expected_path[end])
-            else
-                pos_err, heading_err = tracking_error(x, x_plan)
-            end
-            tracking_penalty = pos_err + 0.5 * heading_err # NOTE: We should rethink this
-
-            # penalize replanning
-            if a == :continue_plan
-                plan_penalty = 0.0
-            else
-                plan_penalty = replan_cost
-            end
-            
-            return -tracking_penalty - plan_penalty
+        # Replanning will have 0 tracking error cost and only the replanning cost
+        elseif a == :replan_nominal || a == :replan_failure
+            return -replan_cost
         end
+
+        # Calculate tracking error relative to current planned state
+        x_plan = get_planned_state(expected_path, plan_index)
+
+        if x_plan === nothing
+            pos_err, heading_err = tracking_error(x, expected_path[end])
+        else
+            pos_err, heading_err = tracking_error(x, x_plan)
+        end
+        tracking_penalty = tracking_penalty_func(pos_err, heading_err)
+        
+        return -tracking_penalty
     end,
     
-    discount = 1.00,
+    discount = 0.999,
     isterminal = s -> in_collision(s[1], obstacles) || reached_goal(s[1], goal_state)
 )
 
-# Do a test with the always continue policy
+# ----- Tests -----
 
+### π_continue
 # Plot a single run of π_continue policy, which is the baseline
 history = simulate(HistoryRecorder(max_steps=maxSteps), main_pomdp, π_continue) # history is a SimHistory object
 
 display(plot_plan_with_actual(pathHistory, first.(state_hist(history))))
 
-@show collect(observation_hist(history))[end-10:end]
+# Some debugging outputs for π_continue
+display(collect(observation_hist(history))[end-10:end])
+@show r = discounted_reward(history)
+
+### π_qmdp
+include("approx_pomdp.jl")
+
+# Approximate POMDP updater and initial belief
+up = DiscreteUpdater(approx_pomdp)
+b0 = initialize_belief(up, initialstate(approx_pomdp))
+
+# Plot a single run of π_qmdp
+history = simulate(HistoryRecorder(max_steps=maxSteps), main_pomdp, π_qmdp, up, b0) # history is a SimHistory object
+
+display(plot_plan_with_actual(pathHistory, first.(state_hist(history))))
+
+# Some debugging outputs for π_qmdp
+display(collect(observation_hist(history))[end-10:end])
+@show r = discounted_reward(history)

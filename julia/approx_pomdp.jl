@@ -1,62 +1,55 @@
+# ----- Constants for ApPrOMDP -----
+# Number of mismatches between plan_type and wrong_count before reporting medium and large errors
+# This "approximates" calculating the error between the true trajectory and expected trajectory
+const num_fails_med::Int = 2
+const num_fails_large::Int = 5
+
 approx_pomdp = QuickPOMDP(
     # State stored as:
     # (mode, plan_type, wrong_count)
     # (x, y, theta) are the continuous state space
     # mode = [:healthy, :turn_bias]
     # plan_type = [:healthy, :turn_bias]
-    # wrong_count = Number of times in a row (mode != plan_type). Used to determine observation.
+    # wrong_count = Number of times (mode != plan_type) before replanning. Used to determine observation and reward.
 
-    # For continuous spaces, don't set "state"
-    initialstate = Deterministic((:healthy, :nominal, 0)),
+    # Discrete state space
+    states = [(mode, plan_type, wrong_count) for mode in (:healthy, :turn_bias) for plan_type in (:healthy, :turn_bias) for wrong_count in 0:num_fails_large],
+    initialstate = Deterministic((:healthy, :healthy, 0)),
     
     actions = [:continue_plan, :replan_nominal, :replan_failure],
     observations = [(error, plan_type) for error in (:small_error, :medium_error, :large_error) for plan_type in (:healthy, :turn_bias)],
 
     transition = function(s, a)
-        x, mode, plan_index, controls, expected_path = s
+        mode, plan_type, wrong_count = s
 
-        # Replan under nominal model
+        # If replanning, set wrong_count to 0
         if a == :replan_nominal
-            if tracking # If tracking, record the current plan before replanning
-                push!(pathHistory, expected_path[1:plan_index])
-            end
-            return Deterministic((x, mode, 1, create_plan(:healthy, x)...))
+            return Deterministic((mode, :healthy, 0))
         # Replan under failure-aware model
         elseif a == :replan_failure
-            if tracking # If tracking, record the current plan before replanning
-                push!(pathHistory, expected_path[1:plan_index])
-            end
-            return Deterministic((x, mode, 1, create_plan(:turn_bias, x)...))
-
-        # Continue current plan
+            return Deterministic((mode, :turn_bias, 0))
+        # Continuing with plan
         else
-            u = get_planned_control(controls, plan_index)
-
-            # If no control left, stay in place
-            if u === nothing
-                return Deterministic((x, mode, plan_index, controls, expected_path))
+            # Increment wrong_count (until num_fails_large) if our dynamics are not consistent with our model. This is used to determine observation
+            if (mode != plan_type) && wrong_count < 5
+                wrong_count += 1
             end
-
-            # Propagate actual state using current control
-            x_next = propagate_unicycle(x, u, mode, dt)
-            
-            # increment plan index 
-            next_plan_index = plan_index + 1
 
             # Hidden dynamics: mode probabilistically switches between healthy and biased
+            make_state = mode -> (mode, plan_type, wrong_count) # Helper to construct state
             if mode == :healthy
                 return SparseCat(
                     [
-                        (x_next, :healthy, next_plan_index, controls, expected_path),
-                        (x_next, :turn_bias, next_plan_index, controls, expected_path)
+                        make_state(:healthy),
+                        make_state(:turn_bias)
                     ],
                     [1 - fail_chance, fail_chance]
                 )
             elseif mode == :turn_bias
                 return SparseCat(
                     [
-                        (x_next, :turn_bias, next_plan_index, controls, expected_path),
-                        (x_next, :healthy, next_plan_index, controls, expected_path)
+                        make_state(:turn_bias),
+                        make_state(:healthy)
                     ],
                     [1 - fail_chance, fail_chance]
                 )
@@ -67,82 +60,64 @@ approx_pomdp = QuickPOMDP(
     end,
 
     observation = function(a, sp)
-        # If action was not to continue, error is small by definition
-        if a != :continue_plan
-            return Deterministic(:small_error)
+        # Extract state
+        mode, plan_type, wrong_count = sp
+
+        # Helper to construct observation. plan_type is deterministically observed
+        obs = error -> (error, plan_type)
+
+        # If action was to replan, error is small by definition
+        if a == :replan_nominal || a == :replan_failure
+            return Deterministic(obs(:small_error))
         end
 
-        # Extract state
-        x, mode, plan_index, controls, expected_path = sp
-        # If reached goal or in collision, observation doesn't matter
-        if in_collision(x, obstacles) || reached_goal(x, goal_state)
-            return Deterministic(:small_error)
-        else
-            x_plan = get_planned_state(expected_path, plan_index)
-            if x_plan === nothing
-                return Deterministic(:large_error)
-            end
+        # To simulate z_true in the main POMDP, look at number of 
+        if wrong_count < num_fails_med # Small error
+            return SparseCat(
+                [obs(:small_error), obs(:medium_error), obs(:large_error)],
+                [0.85, 0.10, 0.05]
+            )
 
-            z_true = tracking_error_level(x, x_plan)
+        elseif wrong_count < num_fails_large # Medium error
+            return SparseCat(
+                [obs(:small_error), obs(:medium_error), obs(:large_error)],
+                [0.10, 0.80, 0.10]
+            )
 
-            if z_true == :small_error
-                return SparseCat(
-                    [:small_error, :medium_error, :large_error],
-                    [0.85, 0.10, 0.05]
-                )
-
-            elseif z_true == :medium_error
-                return SparseCat(
-                    [:small_error, :medium_error, :large_error],
-                    [0.10, 0.80, 0.10]
-                )
-
-            else
-                return SparseCat(
-                    [:small_error, :medium_error, :large_error],
-                    [0.05, 0.10, 0.85]
-                )
-            end
+        else # Large Error
+            return SparseCat(
+                [obs(:small_error), obs(:medium_error), obs(:large_error)],
+                [0.05, 0.10, 0.85]
+            )
         end
     end,
 
     reward = function(s, a, sp)
-        x, mode, plan_index, controls, expected_path = sp
+        mode, plan_type, wrong_count = sp
 
-        if in_collision(x, obstacles)
-            if tracking # If tracking, record the current plan before terminating
-                push!(pathHistory, expected_path)
-            end
-            return -collision_penalty
-
-        elseif reached_goal(x, goal_state)
-            if tracking # If tracking, record the current plan before terminating
-                push!(pathHistory, expected_path)
-            end
-            return goal_reward
-
-        else
-            # tracking error relative to current planned state
-            x_plan = get_planned_state(expected_path, plan_index)
-
-            if x_plan === nothing
-                pos_err, heading_err = tracking_error(x, expected_path[end])
-            else
-                pos_err, heading_err = tracking_error(x, x_plan)
-            end
-            tracking_penalty = pos_err + 0.5 * heading_err # NOTE: We should rethink this
-
-            # penalize replanning
-            if a == :continue_plan
-                plan_penalty = 0.0
-            else
-                plan_penalty = replan_cost
-            end
-
-            return -tracking_penalty - plan_penalty
+        # Replanning will have 0 tracking error cost and only the replanning cost
+        if a == :replan_nominal || a == :replan_failure
+            return -replan_cost
         end
+
+        # To approximate main POMDP tracking reward, use wrong_count to determine if error is small, medium, or large.
+        # Then, assume the reward is the smallest possible error in the error categories
+        if wrong_count < num_fails_med # Small error
+            pos_err = 0
+            heading_err = 0
+
+        elseif wrong_count < num_fails_large # Medium error
+            pos_err = measThresholds.small_pos
+            heading_err = measThresholds.small_heading
+
+        else # Large Error
+            pos_err = measThresholds.med_pos
+            heading_err = measThresholds.med_heading
+        end
+        tracking_penalty = tracking_penalty_func(pos_err, heading_err)
+
+        return -tracking_penalty
     end,
     
-    discount = 0.99,
-    isterminal = s -> in_collision(s[1], obstacles) || reached_goal(s[1], goal_state)
+    discount = 0.999
 )
