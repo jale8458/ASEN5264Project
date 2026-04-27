@@ -1,6 +1,6 @@
 
 # Helper function: Create an active plan
-function create_plan(mode, x)
+function create_plan(mode, x; plan_time = 5.0, logOutput = true)
     if mode == :healthy
         angle_bias = 0.0
     elseif mode == :turn_bias
@@ -9,7 +9,7 @@ function create_plan(mode, x)
         error("Unknown planning mode in create_plan call")
     end
 
-    control, controlDurations, path = Main.CppOMPL.PlanWithSSTFromState(obs_file, endpoints_file, x[1], x[2], x[3], angle_bias, 5.0)
+    control, controlDurations, path = Main.CppOMPL.PlanWithSSTFromState(obs_file, endpoints_file, x[1], x[2], x[3], angle_bias, plan_time, logOutput)
 
     # Number of timesteps to execute each control
     nTimesteps = round.(Int,controlDurations/dt)

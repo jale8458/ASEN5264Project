@@ -6,13 +6,14 @@ using POMDPs # : actions, @gen, isterminal, discount, statetype, actiontype, sim
 using ProgressMeter
 # Solvers
 using QMDP: QMDPSolver
+using DiscreteValueIteration: ValueIterationSolver
+using BasicPOMCP
 
 # Custom Imports
 include("dynamics.jl")
 include("collision_checker.jl")
 include("planner_interface.jl")
 include("error_tracking.jl")
-include("policies.jl")
 include("plotter.jl")
 
 # ----- Custom Runtime setup for Windows -----
@@ -35,23 +36,24 @@ end
 # Directories
 # const ENV_DIR = joinpath(@__DIR__, "OMPL/environments")
 const ENV_DIR = raw"/Users/Jacob/Downloads/School/ASEN 5264/ASEN5264Project/OMPL/environments"
-const obs_file = "main_obstacles.csv"
-const endpoints_file = "main_endpoints.csv"
+const obs_file = "tunnel_obstacles.csv"
+const endpoints_file = "tunnel_endpoints.csv"
 # ----- Constants -----
 const max_fails = 5
 const dt = 0.1
 const turn_bias = 0.8
 const collision_penalty = 100.0
 const goal_reward = 100.0
-const replan_cost = 2.0
+const replan_cost = 10.0
 const wheel_radius = 0.5
 const fail_chance = 0.01
 
 # Max steps for MC simulations
 const maxSteps = 1000
+const numRuns = 100
 
 # Measurement Thresholds
-const measThresholds = thresholds(0.25, pi/30, 0.75, pi/6)
+const measThresholds = thresholds(0.25, pi/30, 0.75, pi/12)
 
 # Tracking penalty function
 tracking_penalty_func = (pos_err, heading_err) -> pos_err + 0.5 * heading_err # NOTE: We should rethink this
@@ -82,8 +84,7 @@ main_pomdp = QuickPOMDP(
     # expected_path = Vector{Vector{Float64}} expected path following controls if dynamics stay constant
 
     # For continuous spaces, don't set "state"
-    ############# NOTE: NEED TO FIX SO THIS CALLS IT EVERY TIME AND NOT JUST ONCE AT THE BEGINNING
-    initialstate = Deterministic((start_state, :healthy, :healthy, 1, create_plan(:healthy, start_state)...)),
+    initialstate = Deterministic((start_state, :healthy, :healthy, 1, create_plan(:healthy, start_state; plan_time = 20.0)...)),
     
     actions = [:continue_plan, :replan_nominal, :replan_failure],
     observations = [(error, plan_type) for error in (:small_error, :medium_error, :large_error) for plan_type in (:healthy, :turn_bias)],
@@ -96,13 +97,13 @@ main_pomdp = QuickPOMDP(
             if tracking # If tracking, record the current plan before replanning
                 push!(pathHistory, expected_path[1:plan_index])
             end
-            return Deterministic((x, mode, :healthy, 1, create_plan(:healthy, x)...)) # For nominal trajectory, make plan with healthy wheel dynamics
+            return Deterministic((x, mode, :healthy, 1, create_plan(:healthy, x; logOutput = false)...)) # For nominal trajectory, make plan with healthy wheel dynamics
         # Replan under failure-aware model
         elseif a == :replan_failure
             if tracking # If tracking, record the current plan before replanning
                 push!(pathHistory, expected_path[1:plan_index])
             end
-            return Deterministic((x, mode, :turn_bias, 1, create_plan(:turn_bias, x)...))
+            return Deterministic((x, mode, :turn_bias, 1, create_plan(:turn_bias, x; logOutput = false)...))
 
         # Continue current plan
         else
@@ -222,35 +223,89 @@ main_pomdp = QuickPOMDP(
         return -tracking_penalty
     end,
     
-    discount = 0.999,
+    discount = 1.0,
     isterminal = s -> in_collision(s[1], obstacles) || reached_goal(s[1], goal_state)
 )
 
-# ----- Tests -----
-
-### π_continue
-# Plot a single run of π_continue policy, which is the baseline
-history = simulate(HistoryRecorder(max_steps=maxSteps), main_pomdp, π_continue) # history is a SimHistory object
-
-display(plot_plan_with_actual(pathHistory, first.(state_hist(history))))
-
-# Some debugging outputs for π_continue
-display(collect(observation_hist(history))[end-10:end])
-@show r = discounted_reward(history)
-
-### π_qmdp
 include("approx_pomdp.jl")
 
-# Approximate POMDP updater and initial belief
+############
+# Solvers
+############
+@info "Generating Solvers"
+
+# Naive Solutions
+π_continue = FunctionPolicy(s -> :continue_plan)
+
+# Approximate POMDP updater and initial belief. Initial state is from the main_pomdp
 up = DiscreteUpdater(approx_pomdp)
 b0 = initialize_belief(up, initialstate(approx_pomdp))
+s0 = rand(initialstate(main_pomdp))
+
+# QMDP and SARSOP
 π_qmdp = solve(QMDPSolver(), approx_pomdp)
 
-# Plot a single run of π_qmdp
-history = simulate(HistoryRecorder(max_steps=maxSteps), main_pomdp, π_qmdp, up, b0) # history is a SimHistory object
+# POMCP
+# Value Iteration for Underlying MDP
+function value_iteration(m)
+    solver = ValueIterationSolver(max_iterations=1000, belres=1e-6)
+    policy = solve(solver, UnderlyingMDP(m))
+    return policy.util  # this IS the value vector you index with stateindex
+end
 
-display(plot_plan_with_actual(pathHistory, first.(state_hist(history))))
+# POMCP Solver
+function pomcp_solve(m) # this function makes capturing m in the rollout policy more efficient
+    # Use the value iteration estimate as the estimate value
+    V = value_iteration(m)
+    solver = POMCPSolver(tree_queries=500,
+                         max_depth=20,
+                         c=1.0,
+                         default_action= ExceptionRethrow(),
+                         estimate_value= (m, s, h::BeliefNode, steps) -> V[stateindex(m,s)])
+    return solve(solver, m)
+end
+π_pomcp = pomcp_solve(approx_pomdp)
 
-# Some debugging outputs for π_qmdp
-display(collect(observation_hist(history))[end-10:end])
-@show r = discounted_reward(history)
+############
+# Monte Carlo evaluation
+############
+
+# QMDP
+results_qmdp = @showprogress "Running QMDP Policy" [simulate(RolloutSimulator(max_steps=maxSteps), main_pomdp, π_qmdp, up, b0, s0) for _ in 1:numRuns]
+@info "QMDP policy:"
+@show μ_QMDP = mean(results_qmdp)
+@show SEM_QMDP = std(results_qmdp) / sqrt(length(results_qmdp))
+
+# POMCP
+results_pomcp = @showprogress "Running POMCP Policy" [simulate(RolloutSimulator(max_steps=maxSteps), main_pomdp, π_pomcp, up, b0, s0) for _ in 1:numRuns]
+@info "POMCP policy:"
+@show μ_POMCP = mean(results_pomcp)
+@show SEM_POMCP = std(results_pomcp) / sqrt(length(results_pomcp))
+
+# ----- Tests -----
+
+# savefig(plot_environment(), raw"/Users/Jacob/Downloads/School/ASEN 5264/ASEN5264Project/julia/plots/tunnel_env.pdf")
+
+##### π_continue
+# ### Plot a single run of π_continue policy, which is the baseline
+# history = simulate(HistoryRecorder(max_steps=maxSteps), main_pomdp, π_continue) # history is a SimHistory object
+
+# # display(plot_plan_with_actual(pathHistory, first.(state_hist(history))))
+# # savefig(plot_plan_with_actual(pathHistory, first.(state_hist(history))), raw"/Users/Jacob/Downloads/School/ASEN 5264/ASEN5264Project/julia/plots/tunnel_continue.pdf")
+# empty!(pathHistory)
+
+# # Some debugging outputs for π_continue
+# display(collect(observation_hist(history))[end-10:end])
+# @show r = discounted_reward(history)
+
+##### π_qmdp
+# ### Plot a single run of π_qmdp
+# history = simulate(HistoryRecorder(max_steps=maxSteps), main_pomdp, π_qmdp, up, b0, s0) # history is a SimHistory object
+
+# # display(plot_plan_with_actual(pathHistory, first.(state_hist(history))))
+# # savefig(plot_plan_with_actual(pathHistory, first.(state_hist(history))), raw"/Users/Jacob/Downloads/School/ASEN 5264/ASEN5264Project/julia/plots/tunnel_qmdp.pdf")
+# empty!(pathHistory)
+
+# # Some debugging outputs for π_qmdp
+# display(collect(observation_hist(history))[end-10:end])
+# @show r = discounted_reward(history)

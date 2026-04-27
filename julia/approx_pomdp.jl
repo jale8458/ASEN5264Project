@@ -119,5 +119,5 @@ approx_pomdp = QuickPOMDP(
         return -tracking_penalty
     end,
     
-    discount = 0.999
+    discount = 0.99
 )

@@ -77,8 +77,16 @@ PlanWithSSTFromState(
     const double startY,
     const double startTheta,
     const double angleBias,
-    const double solveTime
+    const double solveTime,
+    const bool logOutput
 ) {
+    // Determine whether to log output
+    if (logOutput) {
+        ompl::msg::setLogLevel(ompl::msg::LOG_INFO);
+    } else {
+        ompl::msg::setLogLevel(ompl::msg::LOG_NONE);
+    }
+
     // Bounds
     ob::RealVectorBounds se2Bounds = ObsSpace2D::getBoundsGeneric();
     ob::RealVectorBounds cBounds(2);

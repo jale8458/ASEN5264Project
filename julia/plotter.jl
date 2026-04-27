@@ -28,23 +28,28 @@ function plot_goal_circle!(goal_state, pos_tol = 0.5; label="goal", color=:green
     scatter!([goal_state[1]], [goal_state[2]], label=label, color=color, markersize=4)
 end
 
-function plot_plans!(p, pathHistory; title_str="SST Plans")
+function plot_plans!(p, pathHistory)
     # p is a plot object
     for (i, path) in enumerate(pathHistory)
         xs, ys = path_matrix_from_path(path)
 
         plot!(p,
             xs, ys,
-            label="SST Plan $i",
-            linewidth=3,
-            marker=:circle,
-            aspect_ratio=:equal,
-            xlabel="x",
-            ylabel="y",
-            title=title_str,
-            xlims=(0, 10),
-            ylims=(0, 10)
+            label=(i == 1) ? "SST Plan" : "",
+            linewidth=6,
+            color=:red
         )
+        # Add X at each replan
+        if i < length(pathHistory)
+            scatter!(p,
+                [xs[end]], [ys[end]],
+                marker=:x,
+                markersize=7,
+                markerstrokewidth=3,
+                color=:blue,
+                label=(i == 1) ? "Replan Points" : ""
+            )
+        end
     end
 
     plot_obstacles!(p, obstacles)
@@ -55,21 +60,31 @@ function plot_plans!(p, pathHistory; title_str="SST Plans")
     return p
 end
 
-function plot_plan_with_actual(pathHistory, actual_path)
+function plot_plan_with_actual(pathHistory, actual_path; title_str="Actual Path Against Plan Paths")
 
     xs_actual = [p[1] for p in actual_path]
     ys_actual = [p[2] for p in actual_path]
 
-    pathPlot = plot(size=(600,600), margin=0Plots.mm, left_margin=2Plots.mm, bottom_margin=2Plots.mm, dpi=300)
+    pathPlot = plot(aspect_ratio=:equal, xlabel="x", ylabel="y", title=title_str, xlims=(xmin, xmax), ylims=(ymin, ymax), size=(600,600), margin=0Plots.mm, left_margin=2Plots.mm, bottom_margin=2Plots.mm, dpi=300)
     plot_plans!(pathPlot, pathHistory)
 
     plot!(pathPlot,
         xs_actual, ys_actual,
         label="POMDP Execution",
         linewidth=3,
-        marker=:diamond
+        color=:black
     )
 
     return pathPlot
 end
 
+function plot_environment()
+    pathPlot = plot(aspect_ratio=:equal, xlabel="x", ylabel="y", title="Environment", xlims=(xmin, xmax), ylims=(ymin, ymax), size=(600,600), margin=0Plots.mm, left_margin=2Plots.mm, bottom_margin=2Plots.mm, dpi=300)
+
+    plot_obstacles!(pathPlot, obstacles)
+
+    scatter!([start_state[1]], [start_state[2]], label="start", markersize=6)
+    plot_goal_circle!(goal_state)
+
+    return pathPlot
+end
