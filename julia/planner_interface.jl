@@ -6,7 +6,7 @@ function create_plan(mode, x)
     elseif mode == :turn_bias
         angle_bias = turn_bias
     else
-        error("Unknown planning mode in set_active_plan call")
+        error("Unknown planning mode in create_plan call")
     end
 
     control, controlDurations, path = Main.CppOMPL.PlanWithSSTFromState(

@@ -31,7 +31,7 @@ approx_pomdp = QuickPOMDP(
         # Continuing with plan
         else
             # Increment wrong_count (until num_fails_large) if our dynamics are not consistent with our model. This is used to determine observation
-            if (mode != plan_type) && wrong_count < 5
+            if (mode != plan_type) && wrong_count < num_fails_large
                 wrong_count += 1
             end
 

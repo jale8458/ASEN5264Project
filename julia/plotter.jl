@@ -62,8 +62,6 @@ function plot_plan_with_actual(pathHistory, actual_path)
         marker=:diamond
     )
 
-    plot_obstacles!(pathPlot, obstacles)
-
     return pathPlot
 end
 
