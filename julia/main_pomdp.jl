@@ -35,8 +35,8 @@ end
 # Directories
 # const ENV_DIR = joinpath(@__DIR__, "OMPL/environments")
 const ENV_DIR = raw"/Users/Jacob/Downloads/School/ASEN 5264/ASEN5264Project/OMPL/environments"
-const obs_file = joinpath(ENV_DIR, "test.csv")
-const endpoints_file = joinpath(ENV_DIR, "test_ends.csv")
+const obs_file = "main_obstacles.csv"
+const endpoints_file = "main_endpoints.csv"
 # ----- Constants -----
 const max_fails = 5
 const dt = 0.1
@@ -68,8 +68,8 @@ const tracking = true # If true, will track path plan history in pathHistory
 const pathHistory = Vector{Vector{Vector{Float64}}}()
 
 # -------------- Initialize the problem ---------------
-start_state, goal_state = load_start_goal(endpoints_file)
-obstacles = get_obstacles_csv(obs_file)
+start_state, goal_state = load_start_goal(joinpath(ENV_DIR, endpoints_file))
+obstacles = get_obstacles_csv(joinpath(ENV_DIR, obs_file))
 
 main_pomdp = QuickPOMDP(
     # Continuous state stored as:
@@ -244,6 +244,7 @@ include("approx_pomdp.jl")
 # Approximate POMDP updater and initial belief
 up = DiscreteUpdater(approx_pomdp)
 b0 = initialize_belief(up, initialstate(approx_pomdp))
+π_qmdp = solve(QMDPSolver(), approx_pomdp)
 
 # Plot a single run of π_qmdp
 history = simulate(HistoryRecorder(max_steps=maxSteps), main_pomdp, π_qmdp, up, b0) # history is a SimHistory object

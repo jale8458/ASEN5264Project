@@ -20,6 +20,14 @@ function plot_obstacles!(plot, obstacles)
     end
 end
 
+function plot_goal_circle!(goal_state, pos_tol = 0.5; label="goal", color=:green, alpha = 0.3)
+    theta = range(0, 2π, length=100)
+    x = goal_state[1] .+ pos_tol .* cos.(theta)
+    y = goal_state[2] .+ pos_tol .* sin.(theta)
+    plot!(Shape(x, y), label=false, color=color, fillalpha=alpha)
+    scatter!([goal_state[1]], [goal_state[2]], label=label, color=color, markersize=4)
+end
+
 function plot_plans!(p, pathHistory; title_str="SST Plans")
     # p is a plot object
     for (i, path) in enumerate(pathHistory)
@@ -42,7 +50,7 @@ function plot_plans!(p, pathHistory; title_str="SST Plans")
     plot_obstacles!(p, obstacles)
 
     scatter!([start_state[1]], [start_state[2]], label="start", markersize=6)
-    scatter!([goal_state[1]], [goal_state[2]], label="goal", markersize=6)
+    plot_goal_circle!(goal_state)
 
     return p
 end
@@ -52,7 +60,7 @@ function plot_plan_with_actual(pathHistory, actual_path)
     xs_actual = [p[1] for p in actual_path]
     ys_actual = [p[2] for p in actual_path]
 
-    pathPlot = plot()
+    pathPlot = plot(size=(600,600), margin=0Plots.mm, left_margin=2Plots.mm, bottom_margin=2Plots.mm, dpi=300)
     plot_plans!(pathPlot, pathHistory)
 
     plot!(pathPlot,

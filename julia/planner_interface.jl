@@ -9,13 +9,7 @@ function create_plan(mode, x)
         error("Unknown planning mode in create_plan call")
     end
 
-    control, controlDurations, path = Main.CppOMPL.PlanWithSSTFromState(
-        "test.csv",
-        "test_ends.csv",
-        x[1], x[2], x[3], 
-        angle_bias,
-        5.0
-    )
+    control, controlDurations, path = Main.CppOMPL.PlanWithSSTFromState(obs_file, endpoints_file, x[1], x[2], x[3], angle_bias, 5.0)
 
     # Number of timesteps to execute each control
     nTimesteps = round.(Int,controlDurations/dt)
