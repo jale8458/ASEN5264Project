@@ -81,7 +81,7 @@ wheel_failure_pomdp = QuickPOMDP(
     end,
            
     initialstate = Deterministic((:healthy, 1)), # Realistic assumption that initial state is healthy
-    discount = 0.95,
+    discount = 0.99,
     isterminal = s -> false
 )
 
@@ -136,7 +136,7 @@ end
 @info "Monte Carlo Evaluations"
 
 # Parameters
-numRuns = 100
+numRuns = 1000
 maxSteps = 500
 
 # Always assumes wheel is healthy
